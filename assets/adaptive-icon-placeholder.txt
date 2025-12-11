@@ -1,0 +1,2 @@
+This is a placeholder for adaptive-icon.png
+Please replace with an adaptive icon for Android.

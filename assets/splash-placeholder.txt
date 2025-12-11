@@ -1,0 +1,2 @@
+This is a placeholder for splash.png
+Please replace with a splash screen image.

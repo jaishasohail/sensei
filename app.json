@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "SENSEI",
+    "slug": "sensei-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "SENSEI needs camera access for AR navigation and object detection.",
+        "NSMicrophoneUsageDescription": "SENSEI needs microphone access for voice commands.",
+        "NSLocationWhenInUseUsageDescription": "SENSEI needs location access for navigation.",
+        "NSBluetoothAlwaysUsageDescription": "SENSEI needs Bluetooth access for wearable device integration."
+      }
+    },
+    "android": {
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "RECORD_AUDIO",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow SENSEI to access camera for AR navigation."
+        }
+      ]
+    ]
+  }
+}
