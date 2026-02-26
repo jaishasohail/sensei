@@ -67,7 +67,6 @@ export default function App() {
   useEffect(() => {
     initializeApp();
     
-    // Check auth status periodically to handle logout
     const authCheckInterval = setInterval(() => {
       if (!ApiService.token && isAuthenticated) {
         setIsAuthenticated(false);
@@ -81,7 +80,6 @@ export default function App() {
   const initializeApp = async () => {
     try {
       await ApiService.initialize();
-      // Check if user has valid token
       if (ApiService.token) {
         setIsAuthenticated(true);
       }

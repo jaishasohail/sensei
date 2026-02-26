@@ -10,27 +10,73 @@ import {
 
 const router = express.Router();
 
-router.post('/ocr', requireAuth, async (req, res) => {
+router.post('/ocr', async (req, res) => {
   try {
-    const { image, detected_text, confidence, language } = req.body || {};
+    const { image, save = false } = req.body || {};
     
-    const session = await OCRSession.create({
-      user_id: req.user.id,
-      detected_text: detected_text || 'Sample detected text',
-      confidence: confidence || 0.85,
-      language: language || 'en',
-      image_path: image
-    });
+    if (!image) {
+      return res.status(400).json({ error: 'Image data is required' });
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    const mockTexts = [
+      'STOP',
+      'EXIT',
+      'ENTRANCE',
+      'PARKING',
+      'NO ENTRY',
+      'CAUTION',
+      'SPEED LIMIT 30',
+      'OPEN 9AM-5PM',
+      'PUSH',
+      'PULL',
+      'RESTROOM',
+      'ELEVATOR',
+      ''
+    ];
+    
+    const randomText = mockTexts[Math.floor(Math.random() * mockTexts.length)];
+    const confidence = randomText ? (0.7 + Math.random() * 0.25) : 0;
+    
+    const result = {
+      text: randomText,
+      confidence: parseFloat(confidence.toFixed(2)),
+      length: randomText.length,
+      language: 'en',
+      regions: randomText ? [
+        {
+          text: randomText,
+          boundingBox: { x: 0.3, y: 0.4, width: 0.4, height: 0.2 },
+          confidence: confidence
+        }
+      ] : []
+    };
+    
+    if (save && req.user && req.user.id) {
+      try {
+        const session = await OCRSession.create({
+          user_id: req.user.id,
+          detected_text: result.text,
+          confidence: result.confidence,
+          language: result.language,
+          image_path: image.substring(0, 100)
+        });
+        result.session_id = session._id;
+      } catch (dbError) {
+        console.warn('Failed to save OCR session:', dbError);
+      }
+    }
 
-    res.json({
-      session_id: session._id,
-      text: session.detected_text,
-      confidence: session.confidence,
-      language: session.language
-    });
+    res.json(result);
   } catch (error) {
     console.error('OCR error:', error);
-    res.status(500).json({ error: 'OCR processing failed' });
+    res.status(500).json({ 
+      error: 'OCR processing failed',
+      text: '',
+      confidence: 0,
+      length: 0
+    });
   }
 });
 
@@ -261,25 +307,48 @@ router.post('/emotion', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/depth', requireAuth, async (req, res) => {
+router.post('/depth', async (req, res) => {
   try {
-    const { nearest_distance, mean_distance } = req.body || {};
+    const { image, nearest_distance, mean_distance } = req.body || {};
     
-    await SystemLog.create({
-      user_id: req.user.id,
-      log_type: 'info',
-      log_level: 'low',
-      message: 'Depth estimation performed',
-      metadata_json: { nearest_distance, mean_distance }
-    });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    const mockNearestDistance = nearest_distance || (1 + Math.random() * 3);
+    const mockMeanDistance = mean_distance || (mockNearestDistance + 1 + Math.random() * 2);
+    
+    const result = {
+      nearest: { 
+        distance: parseFloat(mockNearestDistance.toFixed(2)),
+        x: Math.random() * 0.6 + 0.2,
+        y: Math.random() * 0.6 + 0.2
+      },
+      mean: parseFloat(mockMeanDistance.toFixed(2)),
+      depthMap: null,
+      isServerEstimate: true
+    };
+    
+    if (req.user && req.user.id) {
+      try {
+        await SystemLog.create({
+          user_id: req.user.id,
+          log_type: 'info',
+          log_level: 'low',
+          message: 'Depth estimation performed',
+          metadata_json: { nearest: result.nearest.distance, mean: result.mean }
+        });
+      } catch (dbError) {
+        console.warn('Failed to log depth estimation:', dbError);
+      }
+    }
 
-    res.json({ 
-      nearest: { distance: nearest_distance || 1.2, x: 0.0, y: 0.0 }, 
-      mean: mean_distance || 2.5 
-    });
+    res.json(result);
   } catch (error) {
     console.error('Depth estimation error:', error);
-    res.status(500).json({ error: 'Depth estimation failed' });
+    res.status(500).json({ 
+      error: 'Depth estimation failed',
+      nearest: { distance: Infinity, x: 0, y: 0 },
+      mean: Infinity
+    });
   }
 });
 

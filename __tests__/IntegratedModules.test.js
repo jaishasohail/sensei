@@ -1,13 +1,7 @@
-/**
- * Voice Command, Spatial Audio, Emergency, OCR, Offline, and Wearable Tests
- */
-
 import { describe, it, expect } from '@jest/globals';
 
-// ============ VOICE COMMAND MODULE ============
 describe('Voice Command Module', () => {
   
-  // UT-VOICE-001: Voice Command Recognition - Navigation
   describe('UT-VOICE-001: Recognize Navigation Voice Command', () => {
     it('should parse navigation command correctly', () => {
       const VoiceCommandService = require('../src/services/VoiceCommandService').default;
@@ -34,7 +28,6 @@ describe('Voice Command Module', () => {
     });
   });
 
-  // UT-VOICE-002: Voice Command Recognition - Emergency
   describe('UT-VOICE-002: Recognize Emergency Voice Command', () => {
     it('should recognize emergency keywords', () => {
       const emergencyKeywords = ['emergency', 'help', 'sos'];
@@ -49,7 +42,6 @@ describe('Voice Command Module', () => {
     });
   });
 
-  // UT-VOICE-003: Voice Command Confidence Threshold
   describe('UT-VOICE-003: Reject Low Confidence Voice Commands', () => {
     it('should reject commands below confidence threshold', () => {
       const confidenceThreshold = 0.6;
@@ -61,7 +53,6 @@ describe('Voice Command Module', () => {
     });
   });
 
-  // UT-VOICE-004: Command Parameter Extraction
   describe('UT-VOICE-004: Extract Parameters from Voice Command', () => {
     it('should extract destination and location details', () => {
       const command = "Navigate to Starbucks on Main Street";
@@ -75,26 +66,22 @@ describe('Voice Command Module', () => {
   });
 });
 
-// ============ SPATIAL AUDIO MODULE ============
 describe('Spatial Audio Module', () => {
   
-  // UT-AUDIO-001: Spatial Audio Position Calculation
   describe('UT-AUDIO-001: Calculate Spatial Audio Position', () => {
     it('should calculate audio position for 45° right', () => {
-      const azimuth = 45; // degrees
-      const distance = 10; // meters
+      const azimuth = 45;
+      const distance = 10;
 
       expect(azimuth).toBeGreaterThan(0);
       expect(azimuth).toBeLessThan(90);
       expect(distance).toBeGreaterThan(0);
 
-      // Right channel should be emphasized
       const rightChannelGain = Math.sin((azimuth * Math.PI) / 180);
       expect(rightChannelGain).toBeGreaterThan(0.5);
     });
   });
 
-  // UT-AUDIO-002: Volume Adjustment Based on Distance
   describe('UT-AUDIO-002: Adjust Audio Volume by Distance', () => {
     it('should decrease volume with distance', () => {
       const calculateVolume = (distance) => {
@@ -113,7 +100,6 @@ describe('Spatial Audio Module', () => {
     });
   });
 
-  // UT-AUDIO-003: Audio Channel Panning
   describe('UT-AUDIO-003: Pan Audio to Correct Channel', () => {
     it('should pan audio based on position', () => {
       const calculatePanning = (position) => {
@@ -140,10 +126,8 @@ describe('Spatial Audio Module', () => {
   });
 });
 
-// ============ EMERGENCY SERVICES MODULE ============
 describe('Emergency Services Module', () => {
   
-  // UT-EMG-001: Emergency Alert Message Creation
   describe('UT-EMG-001: Create Emergency Alert Message', () => {
     it('should create proper emergency message', () => {
       const location = { latitude: 37.7749, longitude: -122.4194 };
@@ -158,18 +142,17 @@ describe('Emergency Services Module', () => {
     });
   });
 
-  // UT-EMG-002: Fall Detection Algorithm
   describe('UT-EMG-002: Detect Fall from Accelerometer Data', () => {
     it('should detect fall from acceleration pattern', () => {
       const detectFall = (accelerationData) => {
-        const normal = Math.sqrt(9.8 * 9.8); // ~9.8 m/s²
+        const normal = Math.sqrt(9.8 * 9.8);
         const current = Math.sqrt(
           accelerationData.x ** 2 + 
           accelerationData.y ** 2 + 
           accelerationData.z ** 2
         );
 
-        const threshold = 2.5; // G-force threshold
+        const threshold = 2.5;
         const delta = Math.abs(current - normal);
 
         return delta > threshold;
@@ -183,7 +166,6 @@ describe('Emergency Services Module', () => {
     });
   });
 
-  // UT-EMG-003: Emergency Contact Notification
   describe('UT-EMG-003: Send SMS to Emergency Contacts', () => {
     it('should send to all emergency contacts', () => {
       const contacts = ['+1-555-0100', '+1-555-0200'];
@@ -201,10 +183,8 @@ describe('Emergency Services Module', () => {
   });
 });
 
-// ============ OCR MODULE ============
 describe('OCR Module', () => {
   
-  // UT-OCR-001: Text Detection from Image
   describe('UT-OCR-001: Detect Text in Clear Image', () => {
     it('should detect text with high confidence', () => {
       const mockOCRResult = {
@@ -218,7 +198,6 @@ describe('OCR Module', () => {
     });
   });
 
-  // UT-OCR-002: Text Detection with Low Quality Image
   describe('UT-OCR-002: Handle Low Quality Image Gracefully', () => {
     it('should handle low confidence gracefully', () => {
       const lowQualityResult = {
@@ -233,7 +212,6 @@ describe('OCR Module', () => {
     });
   });
 
-  // UT-OCR-003: Text Translation
   describe('UT-OCR-003: Translate Detected Text', () => {
     it('should translate text correctly', () => {
       const translations = {
@@ -249,10 +227,8 @@ describe('OCR Module', () => {
   });
 });
 
-// ============ OFFLINE MODE MODULE ============
 describe('Offline Mode Module', () => {
   
-  // UT-OFFLINE-001: Map Data Download
   describe('UT-OFFLINE-001: Download Map for Offline Use', () => {
     it('should simulate map download', async () => {
       const downloadMap = async (region, sizeInMB) => {
@@ -274,7 +250,6 @@ describe('Offline Mode Module', () => {
     });
   });
 
-  // UT-OFFLINE-002: Offline Route Calculation
   describe('UT-OFFLINE-002: Calculate Route Using Cached Map', () => {
     it('should use cached data when offline', () => {
       const cachedRegions = ['San Francisco', 'Oakland'];
@@ -297,10 +272,8 @@ describe('Offline Mode Module', () => {
   });
 });
 
-// ============ WEARABLE INTEGRATION MODULE ============
 describe('Wearable Integration Module', () => {
   
-  // UT-WEAR-001: Bluetooth Device Discovery
   describe('UT-WEAR-001: Discover Wearable Device via Bluetooth', () => {
     it('should discover device within timeout', async () => {
       const discoverDevice = async () => {
@@ -322,10 +295,9 @@ describe('Wearable Integration Module', () => {
     });
   });
 
-  // UT-WEAR-002: Haptic Pattern Transmission
   describe('UT-WEAR-002: Send Haptic Pattern to Wearable', () => {
     it('should send haptic pattern successfully', () => {
-      const pattern = [100, 50, 100]; // ms
+      const pattern = [100, 50, 100];
       const sendPattern = (p) => ({
         pattern: p,
         status: 'sent',

@@ -34,7 +34,6 @@ const EmergencyContactsScreen = ({ navigation }) => {
   };
   const loadEmergencyContacts = async () => {
     try {
-      // Try to load from API first if authenticated
       if (ApiService.token) {
         const contacts = await ApiService.getEmergencyContacts();
         setEmergencyContacts(contacts);
@@ -44,7 +43,6 @@ const EmergencyContactsScreen = ({ navigation }) => {
       console.error('Failed to load emergency contacts from API:', error);
     }
     
-    // Fallback to local storage
     const contacts = EmergencyService.getEmergencyContacts();
     setEmergencyContacts(contacts);
   };
@@ -99,7 +97,6 @@ const EmergencyContactsScreen = ({ navigation }) => {
     };
     
     try {
-      // Save to API if authenticated
       if (ApiService.token) {
         await ApiService.addEmergencyContact({
           name: newContact.name,
@@ -109,10 +106,8 @@ const EmergencyContactsScreen = ({ navigation }) => {
       }
     } catch (error) {
       console.error('Failed to sync contact to server:', error);
-      // Continue with local save
     }
     
-    // Save locally
     EmergencyService.addEmergencyContact(newContact);
     await loadEmergencyContacts();
     setContactName('');

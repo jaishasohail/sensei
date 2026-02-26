@@ -43,6 +43,12 @@ class AppInitializer {
       }
       await LocationService.requestPermissions();
       await ObjectDetectionService.requestPermissions();
+      // Preload object detection model in background to reduce latency when opening AR
+      ObjectDetectionService.loadModel().then(() => {
+        console.log('AppInitializer: ObjectDetection model preloaded');
+      }).catch(err => {
+        console.warn('AppInitializer: preload model failed', err);
+      });
       await SpatialAudioService.initialize();
       await BluetoothService.initialize();
       TextToSpeechService.speak('SENSEI initialized');

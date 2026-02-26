@@ -4,7 +4,9 @@
         "checkJs": false,
         "jsx": "react-native",
         "noEmit": true,
-        "strict": false
+        "strict": false,
+        "skipLibCheck": true,
+        "types": []
     },
     "include": [
         "src/**/*",

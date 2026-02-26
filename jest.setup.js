@@ -1,9 +1,7 @@
 import '@testing-library/jest-native/extend-expect';
 
-// Mock React Native modules
 jest.mock('react-native/Libraries/Animated/NativeAnimatedHelper');
 
-// Mock Expo modules
 jest.mock('expo-camera', () => ({
   Camera: {
     Constants: {
@@ -67,7 +65,6 @@ jest.mock('expo-contacts', () => ({
   ),
 }));
 
-// Mock AsyncStorage
 jest.mock('@react-native-async-storage/async-storage', () => ({
   getItem: jest.fn(),
   setItem: jest.fn(),
@@ -75,7 +72,6 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   clear: jest.fn(),
 }));
 
-// Mock TensorFlow
 jest.mock('@tensorflow/tfjs-react-native', () => ({
   ready: jest.fn(() => Promise.resolve()),
 }));
@@ -96,7 +92,6 @@ jest.mock('@tensorflow-models/coco-ssd', () => ({
   ),
 }));
 
-// Suppress console warnings during tests
 global.console = {
   ...console,
   warn: jest.fn(),

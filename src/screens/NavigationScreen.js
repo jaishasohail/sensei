@@ -31,7 +31,6 @@ const NavigationScreen = () => {
     };
   }, []);
   
-  // Periodically record waypoints during navigation
   useEffect(() => {
     let waypointInterval;
     if (isRecording && isNavigating) {
@@ -39,7 +38,6 @@ const NavigationScreen = () => {
         try {
           const location = await LocationService.getCurrentLocation();
           await RouteMemoryService.addWaypoint(location);
-          // Update current recording state
           const recording = RouteMemoryService.currentRecording;
           if (recording) {
             setCurrentRecording(recording);
@@ -47,7 +45,7 @@ const NavigationScreen = () => {
         } catch (error) {
           console.error('Waypoint recording error:', error);
         }
-      }, 30000); // Record waypoint every 30 seconds
+      }, 30000);
     }
     
     return () => {
@@ -141,7 +139,6 @@ const NavigationScreen = () => {
       setIsNavigating(true);
       setSearchResults([]);
       
-      // Start recording route
       const recording = await RouteMemoryService.startRecording(destinationData.name);
       if (recording) {
         setIsRecording(true);
@@ -159,7 +156,6 @@ const NavigationScreen = () => {
     try {
       await NavigationService.stopNavigation();
       
-      // Offer to save recorded route
       if (isRecording && currentRecording) {
         Alert.alert(
           'Save Route',

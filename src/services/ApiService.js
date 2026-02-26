@@ -68,7 +68,6 @@ class ApiService {
     }
   }
 
-  // Authentication
   async register(email, password, name, phone_number) {
     const data = await this.request('/api/auth/register', {
       method: 'POST',
@@ -97,7 +96,6 @@ class ApiService {
     await this.clearToken();
   }
 
-  // User Profile CRUD
   async getUserProfile(userId) {
     return this.request('/api/users/me');
   }
@@ -120,7 +118,6 @@ class ApiService {
     });
   }
 
-  // Emergency Contacts CRUD
   async getEmergencyContacts() {
     return this.request('/api/users/emergency-contacts');
   }
@@ -145,7 +142,6 @@ class ApiService {
     });
   }
 
-  // Emergency Alerts CRUD
   async createEmergencyAlert(alertData) {
     return this.request('/api/emergency/alert', {
       method: 'POST',
@@ -163,7 +159,6 @@ class ApiService {
     });
   }
 
-  // Navigation Sessions CRUD
   async createNavigationSession(userId, sessionData) {
     return this.request('/api/navigation/sessions', {
       method: 'POST',
@@ -188,7 +183,6 @@ class ApiService {
     });
   }
 
-  // Saved Locations CRUD
   async getSavedLocations() {
     return this.request('/api/users/saved-locations');
   }
@@ -213,7 +207,6 @@ class ApiService {
     });
   }
 
-  // Detection Sessions CRUD
   async createDetectionSession(userId, sessionData) {
     return this.request('/api/ai/detection-sessions', {
       method: 'POST',
@@ -225,7 +218,6 @@ class ApiService {
     return this.request(`/api/ai/detection-sessions/${userId}`);
   }
 
-  // OCR Sessions CRUD
   async createOCRSession(userId, sessionData) {
     return this.request('/api/ai/ocr-sessions', {
       method: 'POST',
@@ -240,7 +232,6 @@ class ApiService {
     });
   }
 
-  // System Logs
   async createSystemLog(userId, logData) {
     return this.request('/api/logs', {
       method: 'POST',
@@ -253,7 +244,6 @@ class ApiService {
     return this.request(`/api/logs/${userId}?${params.toString()}`);
   }
 
-  // Offline Maps CRUD
   async getOfflineMaps(userId) {
     return this.request(`/api/offline-maps/${userId}`);
   }

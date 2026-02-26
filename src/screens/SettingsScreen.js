@@ -37,12 +37,7 @@ const SettingsScreen = ({ navigation }) => {
 
   const loadUserData = async () => {
     try {
-      // In a real app, you'd get the user ID from auth context
-      // For now, we'll skip this if no user is logged in
       if (ApiService.token) {
-        // User data would be loaded here
-        // const profile = await ApiService.getUserProfile(userId);
-        // setUserProfile(profile);
       }
     } catch (error) {
       console.error('Failed to load user data:', error);
@@ -369,8 +364,6 @@ const SettingsScreen = ({ navigation }) => {
                   onPress: async () => {
                     await ApiService.logout();
                     TextToSpeechService.speak('Logged out successfully');
-                    // Force app to restart to show auth screen
-                    // In production, use proper navigation reset or context
                   }
                 }
               ]

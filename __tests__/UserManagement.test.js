@@ -1,18 +1,11 @@
-/**
- * User Management Module Tests
- * Tests for authentication, registration, and emergency contacts
- */
-
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Mock services
 jest.mock('@react-native-async-storage/async-storage');
 jest.mock('../src/services/TextToSpeechService');
 
 describe('User Management Module', () => {
   
-  // UT-USER-001: User Registration with Valid Email
   describe('UT-USER-001: Register User with Valid Email', () => {
     it('should create user account successfully with valid email', async () => {
       const testData = {
@@ -35,7 +28,6 @@ describe('User Management Module', () => {
     });
   });
 
-  // UT-USER-002: User Registration with Invalid Email
   describe('UT-USER-002: Register User with Invalid Email Format', () => {
     it('should reject registration with invalid email', async () => {
       const testData = {
@@ -43,7 +35,6 @@ describe('User Management Module', () => {
         password: 'SecurePass123!'
       };
 
-      // Client-side validation
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       const isValid = emailRegex.test(testData.email);
 
@@ -51,7 +42,6 @@ describe('User Management Module', () => {
     });
   });
 
-  // UT-USER-003: Password Strength Validation
   describe('UT-USER-003: Validate Weak Password Rejection', () => {
     it('should reject weak password', () => {
       const weakPassword = '123';
@@ -74,7 +64,6 @@ describe('User Management Module', () => {
     });
   });
 
-  // UT-USER-004: Emergency Contact Addition
   describe('UT-USER-004: Add Emergency Contact Successfully', () => {
     beforeEach(() => {
       AsyncStorage.clear();
@@ -102,7 +91,6 @@ describe('User Management Module', () => {
     });
   });
 
-  // UT-USER-005: Duplicate Emergency Contact Prevention
   describe('UT-USER-005: Prevent Duplicate Emergency Contact', () => {
     it('should prevent adding duplicate phone numbers', async () => {
       const EmergencyService = require('../src/services/EmergencyService').default;
@@ -121,17 +109,15 @@ describe('User Management Module', () => {
 
       expect(duplicate).toBeDefined();
       
-      // Check if duplicate exists before adding
       const isDuplicate = contacts.some(c => c.phone === contact.phone && c.id !== contact.id);
       
       if (isDuplicate) {
-        expect(true).toBe(true); // Duplicate detection works
+        expect(true).toBe(true);
       }
     });
   });
 });
 
-// Export test results
 export default {
   module: 'User Management',
   testsPassed: 0,

@@ -2,56 +2,36 @@ import { Vibration } from 'react-native';
 import TextToSpeechService from './TextToSpeechService';
 import SpatialAudioService from './SpatialAudioService';
 
-/**
- * FootPlacementService - Real-time Foot Placement Guidance
- * 
- * AI Integration:
- * - Uses ObjectDetectionService detections for ground obstacle awareness
- * - Integrates with DepthEstimationService for surface depth analysis
- * - Provides haptic and audio feedback for safe foot placement
- * 
- * Real-time Features:
- * - Continuous ground obstacle monitoring
- * - Path zone analysis (left/center/right)
- * - Stair and uneven surface detection
- * - Adaptive warning frequency based on hazard proximity
- * - Haptic feedback patterns for direction guidance
- */
 class FootPlacementService {
   constructor() {
     this.isActive = false;
     this.detectionInterval = null;
     this.groundObstacles = [];
     this.surfaceTypes = ['concrete', 'grass', 'gravel', 'stairs', 'uneven', 'wet'];
-    this.safetyZone = 1.5; 
+    this.safetyZone = 1.5;
     this.lastWarningTime = 0;
     this.warningCooldown = 2000;
     
-    // Real-time processing state
     this._isProcessing = false;
     this._lastProcessTime = 0;
-    this._minProcessInterval = 100; // 10 FPS for foot placement
+    this._minProcessInterval = 100;
     
-    // Real-time callback
     this._realtimeCallback = null;
     
-    // Performance metrics
     this._performanceMetrics = {
       framesProcessed: 0,
       warningsIssued: 0,
       avgProcessTime: 0,
     };
     
-    // Path history for trajectory prediction
     this._pathHistory = [];
     this._maxPathHistory = 10;
     
-    // Adaptive warning system
     this._warningCooldowns = {
-      critical: 500,   // 0.5s between critical warnings
-      high: 1000,      // 1s between high warnings
-      medium: 2000,    // 2s between medium warnings
-      low: 5000,       // 5s between low warnings
+      critical: 500,
+      high: 1000,
+      medium: 2000,
+      low: 5000,
     };
     this._lastWarningByLevel = {
       critical: 0,
@@ -60,22 +40,18 @@ class FootPlacementService {
       low: 0,
     };
     
-    // Ground level detection config
-    this._groundLevelThreshold = 0.4; // Objects below this Y position are at ground level
-    this._footpathWidth = 1.2; // Estimated width of user's walking path in meters
+    this._groundLevelThreshold = 0.4;
+    this._footpathWidth = 1.2;
+    
+    this._lastStairWarningTime = 0;
+    this._lastSurfaceWarningTime = 0;
   }
   
-  /**
-   * Start real-time foot placement monitoring
-   * @param {Array} detectedObjects - Initial detected objects
-   * @param {Function} callback - Real-time status callback
-   */
   async startMonitoring(detectedObjects, callback) {
     try {
       this.isActive = true;
       this._realtimeCallback = callback;
       
-      // Initial analysis
       this.analyzeFootPath(detectedObjects);
       
       if (callback) {
@@ -95,18 +71,11 @@ class FootPlacementService {
     }
   }
   
-  /**
-   * Process a frame for real-time foot placement analysis
-   * @param {Array} detectedObjects - Detected objects from ObjectDetectionService
-   * @param {Object} depthData - Optional depth data from DepthEstimationService
-   * @returns {Object} Foot placement analysis result
-   */
   async processFrame(detectedObjects, depthData = null) {
     if (!this.isActive) return null;
     
     const now = Date.now();
     
-    // Rate limiting
     if (now - this._lastProcessTime < this._minProcessInterval) {
       return null;
     }
@@ -119,30 +88,22 @@ class FootPlacementService {
     const startTime = performance.now();
     
     try {
-      // Analyze foot path with detected objects
       this.analyzeFootPath(detectedObjects);
       
-      // Enhance with depth data if available
       if (depthData && depthData.zones) {
         this._enhanceWithDepthData(depthData);
       }
       
-      // Check for stairs
       const stairInfo = this.detectStairs(detectedObjects);
       
-      // Check for uneven surface
       const surfaceInfo = this.detectUnevenSurface(detectedObjects);
       
-      // Generate warnings
       const warnings = this.generateWarnings();
       
-      // Check and issue warnings with adaptive cooldown
       await this._checkAndWarnWithAdaptiveCooldown();
       
-      // Update path history for trajectory prediction
       this._updatePathHistory(detectedObjects);
       
-      // Update performance metrics
       const processTime = performance.now() - startTime;
       this._performanceMetrics.framesProcessed++;
       this._performanceMetrics.avgProcessTime = 
@@ -151,7 +112,6 @@ class FootPlacementService {
       
       this._lastProcessTime = now;
       
-      // Build result
       const result = {
         status: 'active',
         obstacles: this.groundObstacles,
@@ -162,7 +122,6 @@ class FootPlacementService {
         pathRecommendation: this.getSafePathRecommendation(detectedObjects),
       };
       
-      // Trigger callback if set
       if (this._realtimeCallback) {
         this._realtimeCallback(result);
       }
@@ -194,7 +153,6 @@ class FootPlacementService {
     }
     this.groundObstacles = detectedObjects
       .filter(obj => {
-        // Enhanced ground level detection
         const isGroundLevel = obj.boundingBox.y + obj.boundingBox.height > this._groundLevelThreshold;
         const isCloseEnough = obj.distance < this.safetyZone * 2;
         const obstacleTypes = [
@@ -215,23 +173,15 @@ class FootPlacementService {
         inFootpath: this._isInFootpath(obj),
         predictedCollisionTime: this._predictCollisionTime(obj),
       }))
-      .sort((a, b) => a.distance - b.distance); // Sort by distance
+      .sort((a, b) => a.distance - b.distance);
   }
   
-  /**
-   * Check if an obstacle is in the user's walking path
-   */
   _isInFootpath(obstacle) {
     const centerX = obstacle.boundingBox.x + obstacle.boundingBox.width / 2;
-    // Center of screen (0.35 - 0.65) is considered the footpath
     return centerX > 0.35 && centerX < 0.65;
   }
   
-  /**
-   * Predict time to collision based on approach rate
-   */
   _predictCollisionTime(obstacle) {
-    // If we have history, calculate approach rate
     if (this._pathHistory.length > 1) {
       const prevFrame = this._pathHistory[this._pathHistory.length - 2];
       const prevObstacle = prevFrame.find(o => o.class === obstacle.class);
@@ -239,20 +189,15 @@ class FootPlacementService {
       if (prevObstacle) {
         const distanceDelta = prevObstacle.distance - obstacle.distance;
         if (distanceDelta > 0) {
-          // Approaching - estimate time to collision
           const approachRate = distanceDelta / (this._minProcessInterval / 1000);
           return obstacle.distance / approachRate;
         }
       }
     }
     
-    // Default: assume 1 m/s walking speed
     return obstacle.distance / 1.0;
   }
   
-  /**
-   * Update path history for trajectory prediction
-   */
   _updatePathHistory(detectedObjects) {
     this._pathHistory.push(
       detectedObjects.map(o => ({ class: o.class, distance: o.distance }))
@@ -263,12 +208,8 @@ class FootPlacementService {
     }
   }
   
-  /**
-   * Enhance analysis with depth data
-   */
   _enhanceWithDepthData(depthData) {
     if (depthData.zones?.critical?.hasObjects) {
-      // Mark all obstacles as critical if depth shows objects very close
       this.groundObstacles.forEach(obs => {
         if (obs.distance < depthData.zones.critical.minDistance * 1.2) {
           obs.hazardLevel = 'critical';
@@ -277,9 +218,6 @@ class FootPlacementService {
     }
   }
   
-  /**
-   * Get the safest direction to move
-   */
   _getSafeDirection() {
     const zones = {
       left: { count: 0, minDistance: Infinity },
@@ -295,7 +233,6 @@ class FootPlacementService {
       }
     });
     
-    // Find safest zone (fewest obstacles, furthest minimum distance)
     let safest = 'center';
     let bestScore = -Infinity;
     
@@ -314,7 +251,6 @@ class FootPlacementService {
     const distance = obstacle.distance;
     const inPath = this._isInFootpath(obstacle);
     
-    // Adjust thresholds if obstacle is directly in path
     const criticalThreshold = inPath ? 0.7 : 0.5;
     const highThreshold = inPath ? 1.2 : 1.0;
     const mediumThreshold = inPath ? this.safetyZone + 0.5 : this.safetyZone;
@@ -338,13 +274,9 @@ class FootPlacementService {
     return 'concrete';
   }
   
-  /**
-   * Adaptive warning system with per-level cooldowns
-   */
   async _checkAndWarnWithAdaptiveCooldown() {
     const now = Date.now();
     
-    // Get highest priority obstacle
     const criticalObstacles = this.groundObstacles
       .filter(obj => obj.hazardLevel === 'critical' || obj.hazardLevel === 'high')
       .sort((a, b) => a.distance - b.distance);
@@ -378,12 +310,11 @@ class FootPlacementService {
   }
   
   async issueWarning(obstacle) {
-    // Enhanced haptic patterns based on hazard level
     const patterns = {
-      critical: [0, 100, 50, 100, 50, 100, 50, 100], // Rapid pulses
-      high: [0, 200, 100, 200, 100, 200],            // Fast pattern
-      medium: [0, 300, 150, 300],                     // Medium pattern
-      low: [0, 500],                                  // Single long pulse
+      critical: [0, 100, 50, 100, 50, 100, 50, 100],
+      high: [0, 200, 100, 200, 100, 200],
+      medium: [0, 300, 150, 300],
+      low: [0, 500],
     };
     
     const pattern = patterns[obstacle.hazardLevel] || patterns.medium;
@@ -393,7 +324,6 @@ class FootPlacementService {
     const distance = obstacle.distance.toFixed(1);
     const safeDir = this._getSafeDirection();
     
-    // Include safe direction advice for critical/high hazards
     let message = `Warning: ${obstacle.class} ${distance} meters ${direction}`;
     if ((obstacle.hazardLevel === 'critical' || obstacle.hazardLevel === 'high') && safeDir !== direction) {
       message += `. Move ${safeDir}`;
@@ -423,15 +353,56 @@ class FootPlacementService {
   }
   
   detectStairs(detectedObjects) {
-    const potentialStairs = detectedObjects.filter(obj => {
-      return obj.boundingBox.height < 0.2 && obj.boundingBox.y > 0.6;
+    // Detect stairs by looking for multiple horizontal objects at ground level
+    // with varying depths suggesting steps
+    const groundLevel = detectedObjects.filter(obj => {
+      const bottomY = obj.boundingBox.y + obj.boundingBox.height;
+      return bottomY > 0.5 && obj.distance < 5;
     });
-    if (potentialStairs.length > 2) {
+    
+    // Sort by distance to find stepped pattern
+    const byDistance = [...groundLevel].sort((a, b) => a.distance - b.distance);
+    
+    // Look for step-like pattern: objects at regular depth intervals
+    let stepPattern = [];
+    for (let i = 1; i < byDistance.length; i++) {
+      const depthDiff = byDistance[i].distance - byDistance[i-1].distance;
+      if (depthDiff > 0.15 && depthDiff < 0.8) {
+        stepPattern.push(byDistance[i]);
+      }
+    }
+    
+    // Also check for narrow horizontal bands (stair-like)
+    const narrowBands = detectedObjects.filter(obj => {
+      return obj.boundingBox.height < 0.15 && 
+             obj.boundingBox.width > 0.15 && 
+             obj.boundingBox.y > 0.4;
+    });
+    
+    const potentialSteps = Math.max(stepPattern.length, narrowBands.length);
+    
+    if (potentialSteps >= 2) {
+      const nearestDistance = byDistance.length > 0 ? byDistance[0].distance : 3;
+      const direction = byDistance.length > 0 ? byDistance[0].position.relative : 'center';
+      
+      // Estimate step depth based on detected pattern
+      let estimatedStepHeight = 0.18; // default step height in meters
+      if (stepPattern.length >= 2) {
+        const avgInterval = stepPattern.reduce((sum, s, i) => {
+          if (i > 0) return sum + (s.distance - stepPattern[i-1].distance);
+          return sum;
+        }, 0) / Math.max(1, stepPattern.length - 1);
+        estimatedStepHeight = Math.min(0.3, Math.max(0.1, avgInterval));
+      }
+      
       return {
         detected: true,
-        direction: potentialStairs[0].position.relative,
-        distance: Math.min(...potentialStairs.map(s => s.distance)),
-        count: potentialStairs.length,
+        direction,
+        distance: nearestDistance,
+        count: potentialSteps,
+        estimatedStepHeight,
+        goingUp: narrowBands.length > 0 && narrowBands[0].boundingBox.y < 0.7,
+        goingDown: narrowBands.length > 0 && narrowBands[0].boundingBox.y > 0.7,
       };
     }
     return { detected: false };
@@ -441,18 +412,87 @@ class FootPlacementService {
     const groundObjects = detectedObjects.filter(obj => 
       obj.boundingBox.y > 0.5 && obj.distance < 3
     );
-    if (groundObjects.length > 3) {
+    if (groundObjects.length >= 2) {
       const heights = groundObjects.map(obj => obj.boundingBox.y);
-      const variance = this.calculateVariance(heights);
-      if (variance > 0.1) {
+      const distances = groundObjects.map(obj => obj.distance);
+      const heightVariance = this.calculateVariance(heights);
+      const distVariance = this.calculateVariance(distances);
+      
+      // Combined variance indicates surface unevenness
+      const combinedVariance = heightVariance + distVariance * 0.5;
+      
+      if (combinedVariance > 0.05) {
         return {
           detected: true,
-          severity: variance > 0.2 ? 'high' : 'medium',
-          variance,
+          severity: combinedVariance > 0.2 ? 'high' : combinedVariance > 0.1 ? 'medium' : 'low',
+          variance: combinedVariance,
+          nearestDistance: Math.min(...distances),
         };
       }
     }
     return { detected: false };
+  }
+  
+  async warnStairs(stairInfo) {
+    if (!stairInfo || !stairInfo.detected) return;
+    
+    const now = Date.now();
+    if (now - (this._lastStairWarningTime || 0) < 3000) return; // 3s cooldown for stair warnings
+    this._lastStairWarningTime = now;
+    
+    const directionText = stairInfo.direction === 'center' ? 'ahead' : `to your ${stairInfo.direction}`;
+    const distText = stairInfo.distance.toFixed(1);
+    const stepText = stairInfo.count > 1 ? `${stairInfo.count} steps` : 'steps';
+    
+    let guidance;
+    if (stairInfo.distance < 1.0) {
+      // Very close - give step-by-step guidance
+      if (stairInfo.goingDown) {
+        guidance = `Stairs going down ${directionText}, ${distText} meters. Careful. Step down slowly, feel each step with your foot before shifting weight.`;
+      } else {
+        guidance = `Stairs going up ${directionText}, ${distText} meters. Lift your feet higher. About ${stepText} detected.`;
+      }
+      Vibration.vibrate([0, 100, 50, 100, 50, 100]);
+    } else if (stairInfo.distance < 2.5) {
+      // Approaching
+      if (stairInfo.goingDown) {
+        guidance = `Stairs going down ${directionText} in ${distText} meters. Approach carefully and use handrail if available.`;
+      } else {
+        guidance = `Stairs ahead ${directionText} in ${distText} meters. ${stepText} detected. Prepare to step up.`;
+      }
+      Vibration.vibrate([0, 200, 100, 200]);
+    } else {
+      guidance = `Stairs detected ${directionText}, ${distText} meters away.`;
+      Vibration.vibrate([0, 300]);
+    }
+    
+    await TextToSpeechService.speak(guidance);
+    await SpatialAudioService.playDirectionalBeep(
+      stairInfo.direction === 'left' ? -30 : stairInfo.direction === 'right' ? 30 : 0,
+      stairInfo.distance
+    );
+  }
+  
+  async warnUnevenSurface(surfaceInfo) {
+    if (!surfaceInfo || !surfaceInfo.detected) return;
+    
+    const now = Date.now();
+    if (now - (this._lastSurfaceWarningTime || 0) < 4000) return; // 4s cooldown
+    this._lastSurfaceWarningTime = now;
+    
+    let guidance;
+    if (surfaceInfo.severity === 'high') {
+      guidance = `Caution. Very uneven surface ahead at ${surfaceInfo.nearestDistance?.toFixed(1) || '?'} meters. Walk slowly and place feet carefully on flat spots.`;
+      Vibration.vibrate([0, 150, 50, 150, 50, 150]);
+    } else if (surfaceInfo.severity === 'medium') {
+      guidance = `Uneven surface ahead. Watch your footing and step carefully.`;
+      Vibration.vibrate([0, 200, 100, 200]);
+    } else {
+      guidance = `Slightly uneven ground ahead. Be careful.`;
+      Vibration.vibrate([0, 300]);
+    }
+    
+    await TextToSpeechService.speak(guidance);
   }
   
   calculateVariance(numbers) {
@@ -501,16 +541,10 @@ class FootPlacementService {
     return this.isActive;
   }
   
-  /**
-   * Get performance metrics
-   */
   getPerformanceMetrics() {
     return { ...this._performanceMetrics };
   }
   
-  /**
-   * Set the safety zone distance
-   */
   setSafetyZone(meters) {
     this.safetyZone = Math.max(0.5, Math.min(5.0, meters));
   }

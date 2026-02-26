@@ -1,18 +1,3 @@
-/**
- * HazardScoringService - Real-time hazard evaluation for detected objects
- * 
- * Scoring System:
- * - Base score by object class (vehicles = 5, persons = 3, furniture = 1-2)
- * - Distance factor (closer = higher score)
- * - Size factor (larger objects = higher visibility/threat)
- * - Position factor (center = highest priority)
- * 
- * Hazard Levels:
- * - critical (score >= 8): Immediate danger, requires urgent action
- * - high (score >= 6): Significant hazard, requires attention
- * - medium (score >= 4): Moderate concern, monitor closely
- * - low (score < 4): Low risk, informational
- */
 class HazardScoringService {
   scoreDetection(d) {
     const baseByClass = {
@@ -37,13 +22,7 @@ class HazardScoringService {
     return { score, level };
   }
   
-  /**
-   * Calculate hazard score - compatibility method for tests
-   * @param {Object} detection - Detection object with class, distance, position
-   * @returns {Object} Hazard evaluation with level and priority
-   */
   calculateHazardScore(detection) {
-    // Normalize input format for compatibility
     const normalized = {
       class: detection.class,
       distance: detection.distance,
@@ -53,7 +32,6 @@ class HazardScoringService {
     
     const { score, level } = this.scoreDetection(normalized);
     
-    // Map level to priority for test compatibility
     const priorityMap = {
       critical: 'immediate',
       high: 'high',

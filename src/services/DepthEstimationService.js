@@ -1,54 +1,35 @@
 import OfflineModeService from './OfflineModeService';
 import { API_BASE_URL } from '../constants/config';
 
-/**
- * DepthEstimationService - Real-time Monocular Depth Estimation
- * 
- * AI Model Strategy:
- * - Primary: MiDaS-style depth estimation via server API
- * - Fallback: Object-size based depth estimation (offline)
- * 
- * Real-time Features:
- * - Frame-rate controlled depth processing
- * - Depth map caching for performance
- * - Zone-based hazard detection (near/mid/far)
- * - Integration with ObjectDetection for enhanced accuracy
- */
 class DepthEstimationService {
   constructor() {
     this.initialized = false;
     this.apiBaseUrl = API_BASE_URL;
     
-    // Real-time state
     this._isProcessing = false;
     this._lastProcessTime = 0;
-    this._minProcessInterval = 200; // 5 FPS for depth estimation
+    this._minProcessInterval = 200;
     
-    // Performance metrics
     this._performanceMetrics = {
       avgProcessTime: 0,
       framesProcessed: 0,
       successfulEstimates: 0,
     };
     
-    // Depth map caching
     this._lastDepthMap = null;
     this._depthMapAge = 0;
-    this._maxDepthMapAge = 500; // ms before requiring new depth map
+    this._maxDepthMapAge = 500;
     
-    // Zone configuration
     this._zones = {
-      critical: 0.5,  // 0-0.5m - immediate danger
-      near: 1.5,      // 0.5-1.5m - close proximity
-      mid: 3.0,       // 1.5-3m - walking distance
-      far: 10.0,      // 3-10m - visible range
+      critical: 0.5,
+      near: 1.5,
+      mid: 3.0,
+      far: 10.0,
     };
     
-    // Real-time callback
     this._realtimeCallback = null;
     this._realtimeActive = false;
     
-    // Object-based depth calibration
     this._knownObjectDepths = new Map();
   }
   
@@ -59,11 +40,6 @@ class DepthEstimationService {
     return true;
   }
   
-  /**
-   * Start real-time depth estimation
-   * @param {Function} callback - Called with depth results
-   * @param {Object} options - Configuration options
-   */
   startRealtimeDepth(callback, options = {}) {
     const { intervalMs = 200 } = options;
     this._minProcessInterval = intervalMs;
@@ -73,9 +49,6 @@ class DepthEstimationService {
     return true;
   }
   
-  /**
-   * Stop real-time depth estimation
-   */
   stopRealtimeDepth() {
     this._realtimeActive = false;
     this._realtimeCallback = null;
@@ -83,18 +56,10 @@ class DepthEstimationService {
     console.log('DepthEstimationService: Real-time depth estimation stopped');
   }
   
-  /**
-   * Process a frame for real-time depth estimation
-   * @param {string} imageBase64 - Base64 encoded image from camera
-   * @param {Array} detectedObjects - Optional detected objects for enhanced depth
-   * @returns {Object} Depth estimation result
-   */
   async processFrame(imageBase64, detectedObjects = []) {
     const now = Date.now();
     
-    // Rate limiting
     if (now - this._lastProcessTime < this._minProcessInterval) {
-      // Return cached depth map if still valid
       if (this._lastDepthMap && (now - this._depthMapAge) < this._maxDepthMapAge) {
         return this._lastDepthMap;
       }
@@ -111,15 +76,12 @@ class DepthEstimationService {
     try {
       let result;
       
-      // Try server-based depth estimation first
       if (OfflineModeService.useCloud() && (await OfflineModeService.pingServer())) {
         result = await this.estimateDepthFromImage(imageBase64);
       } else {
-        // Fallback to object-based depth estimation
         result = this._estimateDepthFromObjects(detectedObjects);
       }
       
-      // Update performance metrics
       const processTime = performance.now() - startTime;
       this._performanceMetrics.framesProcessed++;
       this._performanceMetrics.avgProcessTime = 
@@ -130,15 +92,12 @@ class DepthEstimationService {
         this._performanceMetrics.successfulEstimates++;
       }
       
-      // Analyze zones
       result.zones = this._analyzeZones(result, detectedObjects);
       
-      // Cache the result
       this._lastDepthMap = result;
       this._depthMapAge = now;
       this._lastProcessTime = now;
       
-      // Trigger callback if active
       if (this._realtimeActive && this._realtimeCallback) {
         this._realtimeCallback(result);
       }
@@ -152,15 +111,11 @@ class DepthEstimationService {
     }
   }
   
-  /**
-   * Estimate depth using object detection results (offline fallback)
-   */
   _estimateDepthFromObjects(detectedObjects) {
     if (!detectedObjects || detectedObjects.length === 0) {
       return { nearest: { distance: 5.0, x: 0.5, y: 0.5 }, mean: 5.0, isEstimated: true };
     }
     
-    // Find nearest object
     let nearestObj = detectedObjects[0];
     for (const obj of detectedObjects) {
       if (obj.distance < nearestObj.distance) {
@@ -168,9 +123,11 @@ class DepthEstimationService {
       }
     }
     
-    // Calculate mean distance
     const totalDistance = detectedObjects.reduce((sum, obj) => sum + obj.distance, 0);
     const meanDistance = totalDistance / detectedObjects.length;
+    
+    // Analyze surface characteristics from detection positions
+    const surfaceAnalysis = this._analyzeSurface(detectedObjects);
     
     return {
       nearest: {
@@ -182,12 +139,42 @@ class DepthEstimationService {
       mean: meanDistance,
       isEstimated: true,
       objectCount: detectedObjects.length,
+      surface: surfaceAnalysis,
     };
   }
   
-  /**
-   * Analyze depth zones for hazard detection
-   */
+  _analyzeSurface(detectedObjects) {
+    // Analyze ground-level objects for surface type hints
+    const groundObjects = detectedObjects.filter(obj => 
+      (obj.boundingBox.y + obj.boundingBox.height) > 0.6
+    );
+    
+    // Check for stair-like patterns: multiple small horizontal objects at varying depths
+    const potentialSteps = groundObjects.filter(obj => 
+      obj.boundingBox.height < 0.15 && obj.boundingBox.width > 0.2
+    );
+    
+    // Check depth variance among ground objects for uneven surface detection
+    const groundDistances = groundObjects.map(obj => obj.distance);
+    let depthVariance = 0;
+    if (groundDistances.length > 1) {
+      const mean = groundDistances.reduce((a, b) => a + b, 0) / groundDistances.length;
+      depthVariance = groundDistances.reduce((sum, d) => sum + Math.pow(d - mean, 2), 0) / groundDistances.length;
+    }
+    
+    const hasStairPattern = potentialSteps.length >= 2;
+    const hasUnevenSurface = depthVariance > 0.3;
+    
+    return {
+      hasStairPattern,
+      stepCount: potentialSteps.length,
+      hasUnevenSurface,
+      depthVariance,
+      groundObjectCount: groundObjects.length,
+      nearestGroundDistance: groundDistances.length > 0 ? Math.min(...groundDistances) : Infinity,
+    };
+  }
+  
   _analyzeZones(depthResult, detectedObjects) {
     const zones = {
       critical: { hasObjects: false, objects: [], minDistance: Infinity },
@@ -196,7 +183,6 @@ class DepthEstimationService {
       far: { hasObjects: false, objects: [], minDistance: Infinity },
     };
     
-    // Categorize objects by zone
     for (const obj of detectedObjects) {
       const distance = obj.distance;
       let zone;
@@ -252,30 +238,18 @@ class DepthEstimationService {
     }
   }
   
-  /**
-   * Get performance metrics
-   */
   getPerformanceMetrics() {
     return { ...this._performanceMetrics };
   }
   
-  /**
-   * Set processing interval
-   */
   setProcessInterval(intervalMs) {
     this._minProcessInterval = Math.max(100, Math.min(1000, intervalMs));
   }
   
-  /**
-   * Configure depth zones
-   */
   setZones(zones) {
     this._zones = { ...this._zones, ...zones };
   }
   
-  /**
-   * Get the cached depth map if available
-   */
   getCachedDepthMap() {
     const now = Date.now();
     if (this._lastDepthMap && (now - this._depthMapAge) < this._maxDepthMapAge) {
@@ -284,9 +258,6 @@ class DepthEstimationService {
     return null;
   }
   
-  /**
-   * Check if real-time depth estimation is active
-   */
   isRealtimeActive() {
     return this._realtimeActive;
   }
