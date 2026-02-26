@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 import { View, Text, StyleSheet, Dimensions, Alert } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import * as ExpoCamera from 'expo-camera';
@@ -14,8 +14,72 @@ import FootPlacementService from '../services/FootPlacementService';
 import OCRService from '../services/OCRService';
 import DepthEstimationService from '../services/DepthEstimationService';
 import ARService from '../services/ARService';
+import RealTimeCameraView, { isRealTimeCameraAvailable } from '../components/RealTimeCameraView';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../constants/theme';
 const { width, height } = Dimensions.get('window');
+const DEFAULT_DETECTION_ASPECT = 640 / 480;
+
+function getDetectionContentRect(viewWidth, viewHeight, aspectRatio) {
+  const aspect = aspectRatio ?? DEFAULT_DETECTION_ASPECT;
+  const viewAspect = viewWidth / viewHeight;
+  if (viewAspect > aspect) {
+    const contentHeight = viewHeight;
+    const contentWidth = viewHeight * aspect;
+    return { x: (viewWidth - contentWidth) / 2, y: 0, width: contentWidth, height: contentHeight };
+  }
+  const contentWidth = viewWidth;
+  const contentHeight = viewWidth / aspect;
+  return { x: 0, y: (viewHeight - contentHeight) / 2, width: contentWidth, height: contentHeight };
+}
+
+const CameraViewComponent = ExpoCamera?.CameraView;
+
+function CameraWithCaptureRequest({ captureRequest, onCapture, onReady, ...props }) {
+  const innerRef = useRef(null);
+  const capturingRef = useRef(false);
+  const lastRequestRef = useRef(0);
+  const onCaptureRef = useRef(onCapture);
+  onCaptureRef.current = onCapture;
+
+  useEffect(() => {
+    if (!CameraViewComponent || !captureRequest || captureRequest === lastRequestRef.current) return;
+    if (capturingRef.current) return;
+    const cam = innerRef.current;
+    if (captureRequest <= 3 || captureRequest % 10 === 1) {
+      console.log('ARScreen: [CAPTURE] request=' + captureRequest + ' cam=' + !!cam + ' takePictureAsync=' + !!(cam && typeof cam.takePictureAsync === 'function'));
+    }
+    if (!cam) {
+      console.warn('ARScreen: Capture requested but camera ref not ready');
+      return;
+    }
+    const takePicture = typeof cam.takePictureAsync === 'function' ? cam.takePictureAsync.bind(cam) : (typeof cam.takePicture === 'function' ? cam.takePicture.bind(cam) : null);
+    if (!takePicture) {
+      console.warn('ARScreen: Camera has no takePictureAsync/takePicture');
+      return;
+    }
+    lastRequestRef.current = captureRequest;
+    capturingRef.current = true;
+    takePicture({ base64: true, quality: 0.55, skipProcessing: true, exif: false })
+      .then((photo) => {
+        if (captureRequest <= 2) console.log('ARScreen: [CAPTURE] photo ok base64=' + !!(photo?.base64));
+        if (photo?.base64) onCaptureRef.current?.(photo);
+      })
+      .catch((err) => {
+        console.warn('ARScreen: Capture failed', err?.message || err);
+      })
+      .finally(() => {
+        capturingRef.current = false;
+      });
+  }, [captureRequest]);
+
+  return (
+    <CameraViewComponent
+      {...props}
+      ref={innerRef}
+      onCameraReady={onReady || props.onCameraReady}
+    />
+  );
+}
 function useCompatCameraPermissions() {
   if (typeof ExpoCamera.useCameraPermissions === 'function') {
     return ExpoCamera.useCameraPermissions();
@@ -64,6 +128,15 @@ const ARScreen = () => {
   const [stairInfo, setStairInfo] = useState(null);
   const [surfaceInfo, setSurfaceInfo] = useState(null);
   const [hookPermission, hookRequestPermission] = useCompatCameraPermissions();
+  const [detectionFrameCount, setDetectionFrameCount] = useState(0);
+  const [lastDetectionCount, setLastDetectionCount] = useState(-1);
+  const [detectionStatus, setDetectionStatus] = useState('');
+  const detectionFrameCountRef = useRef(0);
+  const [captureRequest, setCaptureRequest] = useState(0);
+  const processCapturedPhotoRef = useRef(() => {});
+  const lastDetectionAspectRef = useRef(DEFAULT_DETECTION_ASPECT);
+  const previousFrameDetectionsRef = useRef([]);
+  const useRealtimeRef = useRef(false);
   useEffect(() => {
     requestCameraPermission();
     (async () => {
@@ -81,11 +154,11 @@ const ARScreen = () => {
     const applyConfig = (s) => {
       const precision = !!s.precisionMode;
       const config = {
-        scoreThreshold: precision ? 0.35 : 0.2, // Lower threshold for better real-time detection
+        scoreThreshold: precision ? 0.3 : 0.25,
         nmsIoUThreshold: precision ? 0.5 : 0.45,
         perClassNMS: true,
         smoothingFactor: precision ? 0.6 : 0.5,
-        maxDetections: s.maxDetections ?? (precision ? 15 : 20),
+        maxDetections: s.maxDetections ?? (precision ? 20 : 25),
         horizontalFOV: s.horizontalFOV ?? 70,
         verticalFOV: s.verticalFOV ?? 60,
         enableRefinementPass: !!s.refinementPass,
@@ -178,91 +251,88 @@ const ARScreen = () => {
       setHasPermission(false);
     }
   };
-  const runFrameDetection = async () => {
-    if (!cameraRef.current || typeof cameraRef.current.takePictureAsync !== 'function') {
-      console.warn('ARScreen: Camera ref not ready or takePictureAsync unavailable');
-      return;
-    }
-    if (detectionInFlightRef.current) {
+  const processCapturedPhoto = async (photo) => {
+    if (!photo?.base64) {
+      setDetectionStatus('No base64 in photo');
       return;
     }
     detectionInFlightRef.current = true;
+    setDetectionStatus('Running model...');
     try {
-      const photo = await cameraRef.current.takePictureAsync({
-        base64: true,
-        quality: 0.3,
-        skipProcessing: true,
-        exif: false,
-      });
-      // Resume preview immediately after capture
-      try {
-        if (typeof cameraRef.current.resumePreview === 'function') {
-          cameraRef.current.resumePreview();
-        }
-      } catch { }
-      if (!photo?.base64) {
-        console.warn('ARScreen: Photo captured but no base64 data');
-        return;
-      }
-
-      // Decode JPEG to tensor
       const rawBytes = tf.util.encodeString(photo.base64, 'base64');
       let imageTensor = decodeJpeg(rawBytes, 3);
       const [origH, origW] = imageTensor.shape;
-      
-      // Resize to reasonable dimensions for faster inference
-      let resizedTensor;
-      if (origW > 640 || origH > 480) {
-        resizedTensor = tf.tidy(() => {
-          return tf.image.resizeBilinear(imageTensor.expandDims(0), [480, 640])
+      const maxW = 640;
+      const maxH = 480;
+      // Preserve aspect ratio so the model sees correct proportions (portrait 1080x1440 was being squashed to 4:3 → 0 detections)
+      const scale = Math.min(maxW / origW, maxH / origH);
+      const targetW = Math.round(origW * scale);
+      const targetH = Math.round(origH * scale);
+      if (targetW < 1 || targetH < 1) {
+        setDetectionStatus('Image too small');
+        return;
+      }
+      if (origW !== targetW || origH !== targetH) {
+        if (detectionFrameCountRef.current <= 2) {
+          console.log('ARScreen: Resizing photo from', origW + 'x' + origH, 'to', targetW + 'x' + targetH, '(aspect preserved)');
+        }
+        const resizedTensor = tf.tidy(() => {
+          return tf.image.resizeBilinear(imageTensor.expandDims(0), [targetH, targetW])
             .squeeze()
             .cast('int32');
         });
         imageTensor.dispose();
         imageTensor = resizedTensor;
       }
-      
       const [imgH, imgW] = imageTensor.shape;
-      
-      // Run object detection
+      lastDetectionAspectRef.current = imgW / imgH;
       const detections = await ObjectDetectionService.detectFromTensor(imageTensor, imgW, imgH);
       imageTensor.dispose();
-      
-      // Update detected objects state
-      setDetectedObjects(detections);
-      
-      if (detections.length > 0) {
-        // Run depth estimation on detected objects
-        const depthData = await DepthEstimationService.processFrame(photo.base64, detections);
-        
-        // Run foot placement analysis with depth data
-        if (FootPlacementService.isMonitoring()) {
-          const footResult = await FootPlacementService.processFrame(detections, depthData);
-          if (footResult) {
-            if (footResult.warnings && footResult.warnings.length > 0) {
-              setFootWarnings(footResult.warnings);
-            }
-            
-            // Voice guidance for stairs
-            if (footResult.stairs && footResult.stairs.detected) {
-              setStairInfo(footResult.stairs);
-              await FootPlacementService.warnStairs(footResult.stairs);
-            } else {
-              setStairInfo(null);
-            }
-            
-            // Voice guidance for uneven surfaces
-            if (footResult.surface && footResult.surface.detected) {
-              setSurfaceInfo(footResult.surface);
-              await FootPlacementService.warnUnevenSurface(footResult.surface);
-            } else {
-              setSurfaceInfo(null);
+      const prev = previousFrameDetectionsRef.current;
+      const HIGH_CONF = 0.4;
+      const CENTER_DIST_MAX = 0.25;
+      const filteredDetections = detections.filter((d) => {
+        if ((d.confidence ?? 0) >= HIGH_CONF) return true;
+        const dx = d.position?.center?.x ?? (d.boundingBox.x + d.boundingBox.width / 2);
+        const dy = d.position?.center?.y ?? (d.boundingBox.y + d.boundingBox.height / 2);
+        const sameClassNearby = prev.some(
+          (p) => p.class === d.class && Math.hypot((p.cx ?? 0) - dx, (p.cy ?? 0) - dy) < CENTER_DIST_MAX
+        );
+        return sameClassNearby;
+      });
+      previousFrameDetectionsRef.current = filteredDetections.map((d) => ({
+        class: d.class,
+        cx: d.position?.center?.x ?? (d.boundingBox.x + d.boundingBox.width / 2),
+        cy: d.position?.center?.y ?? (d.boundingBox.y + d.boundingBox.height / 2),
+      }));
+      setLastDetectionCount(filteredDetections.length);
+      setDetectionStatus(filteredDetections.length > 0 ? `${filteredDetections.length} object(s)` : '0 objects');
+      if (detectionFrameCountRef.current <= 5 || filteredDetections.length > 0 || detectionFrameCountRef.current % 20 === 0) {
+        console.log('ARScreen: Frame #' + detectionFrameCountRef.current + ' -> ' + filteredDetections.length + ' detected (raw: ' + detections.length + ')');
+      }
+      setDetectedObjects(filteredDetections);
+      const frameNum = detectionFrameCountRef.current;
+      const runDepthAndFoot = frameNum % 2 === 0; // every 2nd frame to keep UI responsive
+      if (filteredDetections.length > 0) {
+        let depthData = null;
+        if (runDepthAndFoot) {
+          depthData = await DepthEstimationService.processFrame(photo.base64, filteredDetections);
+          if (FootPlacementService.isMonitoring()) {
+            const footResult = await FootPlacementService.processFrame(filteredDetections, depthData);
+            if (footResult) {
+              if (footResult.warnings?.length > 0) setFootWarnings(footResult.warnings);
+              if (footResult.stairs?.detected) {
+                setStairInfo(footResult.stairs);
+                await FootPlacementService.warnStairs(footResult.stairs);
+              } else setStairInfo(null);
+              if (footResult.surface?.detected) {
+                setSurfaceInfo(footResult.surface);
+                await FootPlacementService.warnUnevenSurface(footResult.surface);
+              } else setSurfaceInfo(null);
+              }
             }
           }
-        }
-        
-        // Announce critical objects via voice
-        const priorityObjects = detections
+        const priorityObjects = filteredDetections
           .filter(d => ObjectDetectionService.getPriorityLevel(d) === 'critical')
           .sort((a, b) => a.distance - b.distance);
         if (priorityObjects.length > 0) {
@@ -271,25 +341,52 @@ const ARScreen = () => {
           SpatialAudioService.playDirectionalBeep(obj.position.angle, obj.distance);
         }
       } else {
-        // Clear warnings when no objects detected
-        if (FootPlacementService.isMonitoring()) {
-          FootPlacementService.processFrame([], null);
+        if (runDepthAndFoot && FootPlacementService.isMonitoring()) FootPlacementService.processFrame([], null);
+        previousFrameDetectionsRef.current = [];
+        if (runDepthAndFoot) {
+          setFootWarnings([]);
+          setStairInfo(null);
+          setSurfaceInfo(null);
         }
-        setFootWarnings([]);
-        setStairInfo(null);
-        setSurfaceInfo(null);
       }
     } catch (err) {
-      console.warn('ARScreen: frame detection error:', err.message);
+      setDetectionStatus('Error: ' + (err.message || 'unknown'));
+      console.warn('ARScreen: processCapturedPhoto error:', err?.message, err?.stack);
     } finally {
       detectionInFlightRef.current = false;
     }
   };
-  const scheduleDetectionLoop = async () => {
-    if (!isActiveRef.current || !isFocused) return;
-    await runFrameDetection();
-    // Run detection every 800ms for near real-time performance
-    detectionLoopTimeoutRef.current = setTimeout(scheduleDetectionLoop, 800);
+
+  processCapturedPhotoRef.current = processCapturedPhoto;
+
+  const runFrameDetection = () => {
+    if (detectionInFlightRef.current) return;
+    detectionFrameCountRef.current += 1;
+    setDetectionFrameCount(detectionFrameCountRef.current);
+    setDetectionStatus('Capturing...');
+    if (detectionFrameCountRef.current <= 5 || detectionFrameCountRef.current % 15 === 0) {
+      console.log('ARScreen: Detection frame #' + detectionFrameCountRef.current + ', requesting capture');
+    }
+    setCaptureRequest((prev) => prev + 1);
+  };
+
+  const handleCapture = (photo) => {
+    processCapturedPhotoRef.current(photo);
+    if (isActiveRef.current && isFocused) {
+      detectionLoopTimeoutRef.current = setTimeout(scheduleDetectionLoop, 250);
+    }
+  };
+
+  // Snapshot-based detection (takePictureAsync every 250ms). True real-time would need
+  // cameraWithTensors (expo-camera no longer exports Camera component) or react-native-vision-camera frame processor.
+  const scheduleDetectionLoop = () => {
+    if (!isActiveRef.current || !isFocused) {
+      if (detectionFrameCountRef.current < 3) {
+        console.log('ARScreen: [LOOP SKIP] isActiveRef=', isActiveRef.current, 'isFocused=', isFocused);
+      }
+      return;
+    }
+    runFrameDetection();
   };
   const startARDetection = async () => {
     try {
@@ -309,8 +406,14 @@ const ARScreen = () => {
       OCRService.initialize().catch(() => { });
 
       if (modelReady) {
+        useRealtimeRef.current = isRealTimeCameraAvailable();
         ObjectDetectionService.setCameraRef(cameraRef);
+        ObjectDetectionService.setConfig({ scoreThreshold: 0.25 });
         setIsActive(true);
+        isActiveRef.current = true;
+        if (useRealtimeRef.current) {
+          console.log('ARScreen: Using real-time Vision Camera (frame processor)');
+        }
         console.log('ARScreen: ✓ Detection set to ACTIVE');
         console.log('ARScreen: Regular camera will remain visible, detection runs via snapshots');
         if (detectionIntervalRef.current) {
@@ -321,7 +424,10 @@ const ARScreen = () => {
           clearTimeout(detectionLoopTimeoutRef.current);
           detectionLoopTimeoutRef.current = null;
         }
-        scheduleDetectionLoop();
+        if (!useRealtimeRef.current) {
+          console.log('ARScreen: Starting detection loop (snapshot every 250ms), isFocused=', isFocused);
+          scheduleDetectionLoop();
+        }
 
         await FootPlacementService.startMonitoring([], (status) => {
           if (status.warnings) {
@@ -503,12 +609,18 @@ const ARScreen = () => {
       await SpatialAudioService.stopAllSounds();
 
       setIsActive(false);
+      isActiveRef.current = false;
       setDetectedObjects([]);
+      previousFrameDetectionsRef.current = [];
       setFootWarnings([]);
       setOcrText(null);
       setIsOcrActive(false);
       setStairInfo(null);
       setSurfaceInfo(null);
+      setDetectionFrameCount(0);
+      setLastDetectionCount(-1);
+      setDetectionStatus('');
+      detectionFrameCountRef.current = 0;
       // Clear detection interval if using polling
       if (detectionIntervalRef.current) {
         clearInterval(detectionIntervalRef.current);
@@ -605,19 +717,43 @@ const ARScreen = () => {
       </View>
     );
   }
+  const cameraKey = `regular-camera-${cameraSessionKey}`;
+  const cameraProps = {
+    style: styles.camera,
+    onReady: () => {
+      setCameraReady(true);
+      console.log('ARScreen: Regular camera ready');
+    },
+  };
+  if (CameraViewComponent) {
+    cameraProps.facing = 'back';
+  } else if (CameraComponent?.Constants) {
+    cameraProps.type = ResolvedCameraType?.back ?? CameraComponent.Constants.Type?.back ?? 'back';
+  }
+
+  const realTimeActive = isActive && useRealtimeRef.current;
+
   return (
     <View style={styles.container}>
-      {/* Always show regular camera for preview to avoid black screen */}
-      <ResolvedCamera
-        key={`regular-camera-${cameraSessionKey}`}
-        ref={cameraRef}
-        style={styles.camera}
-        {...(CameraViewComponent ? { facing: 'back' } : { type: ResolvedCameraType?.back ?? (CameraComponent && CameraComponent.Constants ? CameraComponent.Constants.Type.back : 'back') })}
-        onCameraReady={() => {
-          setCameraReady(true);
-          console.log('ARScreen: Regular camera ready');
-        }}
-      />
+      {realTimeActive ? (
+        <RealTimeCameraView
+          style={StyleSheet.absoluteFill}
+          isActive={isActive}
+          onDetections={(list) => {
+            setDetectedObjects(list ?? []);
+            setLastDetectionCount((list ?? []).length);
+          }}
+        />
+      ) : CameraViewComponent ? (
+        <CameraWithCaptureRequest
+          key={cameraKey}
+          {...cameraProps}
+          captureRequest={captureRequest}
+          onCapture={handleCapture}
+        />
+      ) : (
+        <ResolvedCamera key={cameraKey} {...cameraProps} ref={cameraRef} />
+      )}
       <View style={styles.overlay}>
         <View style={styles.topBar}>
           <View style={styles.statusContainer}>
@@ -633,20 +769,37 @@ const ARScreen = () => {
             </View>
           )}
         </View>
+        {isActive && (
+          <View style={styles.detectionStatusBar}>
+            <Text style={styles.detectionStatusText} numberOfLines={2}>
+              Frames: {detectionFrameCount} | Last: {lastDetectionCount >= 0 ? lastDetectionCount : '–'} objects
+            </Text>
+            <Text style={styles.detectionStatusSubtext} numberOfLines={1}>
+              {detectionStatus || 'Starting...'}
+            </Text>
+          </View>
+        )}
         {detectedObjects.map((obj, index) => {
           const priority = ObjectDetectionService.getPriorityLevel(obj);
           const markerColor = priority === 'critical' ? COLORS.danger :
             priority === 'warning' ? COLORS.warning : COLORS.primary;
+          const content = getDetectionContentRect(width, height, lastDetectionAspectRef.current);
+          const box = {
+            left: content.x + obj.boundingBox.x * content.width,
+            top: content.y + obj.boundingBox.y * content.height,
+            width: obj.boundingBox.width * content.width,
+            height: obj.boundingBox.height * content.height,
+          };
           return (
             <View
               key={index}
               style={[
                 styles.objectMarker,
                 {
-                  left: obj.boundingBox.x * width,
-                  top: obj.boundingBox.y * height,
-                  width: obj.boundingBox.width * width,
-                  height: obj.boundingBox.height * height,
+                  left: box.left,
+                  top: box.top,
+                  width: box.width,
+                  height: box.height,
                   borderColor: markerColor,
                 },
               ]}
@@ -869,6 +1022,23 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: COLORS.primary,
     marginLeft: SPACING.xs,
+  },
+  detectionStatusBar: {
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  detectionStatusText: {
+    fontSize: FONT_SIZES.sm,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+  detectionStatusSubtext: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textSecondary,
+    marginTop: 2,
   },
   objectMarker: {
     position: 'absolute',

@@ -17,3 +17,9 @@ dist/
 *.lock
 yarn.lock
 package-lock.json
+
+# Android local SDK path (machine-specific)
+android/local.properties
+
+# Server env (secrets)
+server/.env

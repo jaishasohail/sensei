@@ -15,7 +15,8 @@
         "NSMicrophoneUsageDescription": "SENSEI needs microphone access for voice commands.",
         "NSLocationWhenInUseUsageDescription": "SENSEI needs location access for navigation.",
         "NSBluetoothAlwaysUsageDescription": "SENSEI needs Bluetooth access for wearable device integration."
-      }
+      },
+      "bundleIdentifier": "com.anonymous.senseiapp"
     },
     "android": {
       "permissions": [
@@ -26,8 +27,11 @@
         "BLUETOOTH",
         "BLUETOOTH_ADMIN",
         "BLUETOOTH_CONNECT",
-        "BLUETOOTH_SCAN"
-      ]
+        "BLUETOOTH_SCAN",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.anonymous.senseiapp"
     },
     "plugins": [
       [
@@ -35,6 +39,10 @@
         {
           "cameraPermission": "Allow SENSEI to access camera for AR navigation."
         }
+      ],
+      [
+        "react-native-vision-camera",
+        {}
       ]
     ]
   }

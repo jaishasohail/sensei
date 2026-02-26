@@ -29,8 +29,8 @@ class ObjectDetectionService {
     };
     
     this.config = {
-      scoreThreshold: 0.25, // Lowered from 0.4 to detect more objects
-      maxDetections: 20,
+      scoreThreshold: 0.15,
+      maxDetections: 25,
       nmsIoUThreshold: 0.45,
       perClassNMS: true,
       smoothingFactor: 0.6,
@@ -141,7 +141,7 @@ class ObjectDetectionService {
       console.log(`ObjectDetectionService: Using backend ${tf.getBackend()}`);
       
       console.log('ObjectDetectionService: Step 5 - Loading coco-ssd model...');
-      // Try multiple model bases to avoid environment-specific issues
+      // Prefer lite_mobilenet_v2 for speed (real-time feel); fall back to full mobilenet_v2 if lite fails
       const candidates = [
         { base: 'lite_mobilenet_v2' },
         { base: 'mobilenet_v2' },
@@ -209,7 +209,7 @@ class ObjectDetectionService {
       
       const [h, w, c] = tensor.shape;
       const frameNum = this._performanceMetrics.framesProcessed;
-      const shouldLog = frameNum % 30 === 0;
+      const shouldLog = frameNum % 30 === 0 || frameNum < 3;
       
       if (shouldLog) {
         console.log('ObjectDetectionService: Processing frame', frameNum, 'tensor:', [h, w, c], tensor.dtype);
@@ -232,10 +232,13 @@ class ObjectDetectionService {
         });
       }
       // uint8 and int32 tensors are passed directly - coco-ssd handles both
-      
+      // IMPORTANT: coco-ssd detect(img, maxNumBoxes=20, minScore=0.5) - it filters internally by minScore.
+      // We must pass a low minScore (e.g. 0.15) or we get 0 predictions; we apply our own threshold later.
+      const libMinScore = Math.min(0.5, this.config.scoreThreshold);
+      const maxBoxes = this.config.maxDetections || 25;
       let predictions;
       try {
-        predictions = await this.model.detect(detectionTensor);
+        predictions = await this.model.detect(detectionTensor, maxBoxes, libMinScore);
         if (!Array.isArray(predictions)) {
           predictions = [];
         }
@@ -249,25 +252,47 @@ class ObjectDetectionService {
         try { detectionTensor.dispose(); } catch (e) {}
       }
       
-      if (shouldLog) {
-        console.log('ObjectDetectionService: Got', predictions.length, 'raw predictions');
+      if (predictions.length === 0 || shouldLog) {
+        console.log('ObjectDetectionService: Raw predictions:', predictions.length, 'threshold:', this.config.scoreThreshold);
         if (predictions.length > 0) {
-          console.log('  Sample:', predictions[0].class, 'score:', predictions[0].score?.toFixed(3));
+          const sample = predictions[0];
+          console.log('  Sample:', sample.class, 'score:', (sample.score ?? 0).toFixed(3), 'bbox:', sample.bbox);
         }
       }
-      
-      const safePredictions = predictions;
-      const filtered = safePredictions.filter(p => (p.score ?? 0) >= this.config.scoreThreshold);
-      
-      if (shouldLog) {
-        console.log('ObjectDetectionService: After filtering:', filtered.length, '/', safePredictions.length);
+      if (frameNum < 3 && predictions.length === 0) {
+        console.log('ObjectDetectionService: [debug] First frames with 0 raw predictions – tensor was', [h, w, c], tensor.dtype);
+      }
+
+      const safePredictions = predictions.filter(p => p && Array.isArray(p.bbox) && p.bbox.length >= 4);
+      // Drop detections with bbox outside image (e.g. y < 0) – often bad model output
+      const inImage = safePredictions.filter((p) => {
+        const [x, y, w, h] = p.bbox;
+        return x >= 0 && y >= 0 && x + w <= textureWidth && y + h <= textureHeight && w > 0 && h > 0;
+      });
+      const droppedBbox = safePredictions.length - inImage.length;
+      if (droppedBbox > 0 && (frameNum < 5 || frameNum % 20 === 0)) {
+        console.log('ObjectDetectionService: Dropped', droppedBbox, 'prediction(s) with bbox outside image');
+      }
+      // These classes often false-positive indoors: require slightly higher conf (0.45), not hidden
+      const FALSE_POSITIVE_CLASSES = new Set([
+        'snowboard', 'traffic light', 'skateboard', 'surfboard', 'sports ball', 'kite',
+        'baseball bat', 'tennis racket', 'cell phone', 'toothbrush', 'remote', 'book',
+        'oven', 'toaster', 'broccoli', 'pizza', 'donut', 'cake', 'hot dog', 'elephant', 'bear', 'zebra', 'giraffe',
+        'bowl',
+      ]);
+      const minConfForClass = (cls) =>
+        FALSE_POSITIVE_CLASSES.has(cls) ? Math.max(this.config.scoreThreshold, 0.45) : this.config.scoreThreshold;
+      const filtered = inImage.filter(p => (p.score ?? 0) >= minConfForClass(p.class));
+
+      if (safePredictions.length > 0 && filtered.length === 0) {
+        console.log('ObjectDetectionService: All', safePredictions.length, 'predictions below threshold', this.config.scoreThreshold, '- max score:', Math.max(...safePredictions.map(p => p.score ?? 0)).toFixed(3));
       }
       
       const nmsSelected = filtered.length > 0 ? (this.config.perClassNMS
         ? await this._perClassNMS(filtered)
         : await this._globalNMS(filtered)) : [];
       let detections = nmsSelected.map(pred => {
-        const [x, y, w, h] = pred.bbox;
+        const [x, y, w, h] = Array.isArray(pred.bbox) && pred.bbox.length >= 4 ? pred.bbox : [0, 0, 10, 10];
         const norm = {
           x: x / textureWidth,
           y: y / textureHeight,
@@ -429,10 +454,16 @@ class ObjectDetectionService {
       return detections;
     }
   }
+  _bboxToNMSFormat(bbox) {
+    const [x, y, w, h] = Array.isArray(bbox) && bbox.length >= 4 ? bbox : [0, 0, 1, 1];
+    return [y, x, y + h, x + w];
+  }
+
   async _globalNMS(preds) {
     if (preds.length === 0) return [];
     const { maxDetections, nmsIoUThreshold, scoreThreshold } = this.config;
-    const boxesT = tf.tensor2d(preds.map(p => p.bbox));
+    const boxesNMS = preds.map(p => this._bboxToNMSFormat(p.bbox));
+    const boxesT = tf.tensor2d(boxesNMS);
     const scoresT = tf.tensor1d(preds.map(p => p.score ?? 0));
     try {
       const sel = await tf.image.nonMaxSuppressionAsync(boxesT, scoresT, maxDetections, nmsIoUThreshold, scoreThreshold);
@@ -459,7 +490,8 @@ class ObjectDetectionService {
     const { maxDetections, nmsIoUThreshold, scoreThreshold } = this.config;
     
     for (const list of byClass.values()) {
-      const boxesT = tf.tensor2d(list.map(p => p.bbox));
+      const boxesNMS = list.map(p => this._bboxToNMSFormat(p.bbox));
+      const boxesT = tf.tensor2d(boxesNMS);
       const scoresT = tf.tensor1d(list.map(p => p.score ?? 0));
       try {
         const sel = await tf.image.nonMaxSuppressionAsync(boxesT, scoresT, maxDetections, nmsIoUThreshold, scoreThreshold);
