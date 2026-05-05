@@ -43,7 +43,13 @@ class SpatialAudioService {
       const spatialParams = this.calculate3DAudioParams(position, mergedOptions.velocity);
       const player = createAudioPlayer(soundId);
       player.volume = spatialParams.volume * mergedOptions.volume;
-      player.playbackRate = spatialParams.rate * mergedOptions.rate;
+      // playbackRate is a read-only getter on expo-audio AudioPlayer;
+      // use setPlaybackRateAsync() to apply Doppler rate changes.
+      try {
+        if (typeof player.setPlaybackRateAsync === 'function') {
+          await player.setPlaybackRateAsync(spatialParams.rate * mergedOptions.rate);
+        }
+      } catch (_) {}
       player.loop = mergedOptions.shouldLoop;
       if (mergedOptions.shouldPlay !== false) {
         try { player.play(); } catch (e) {  }
@@ -135,7 +141,9 @@ class SpatialAudioService {
     try {
       try {
         if (typeof sound.volume !== 'undefined') sound.volume = spatialParams.volume;
-        if (typeof sound.playbackRate !== 'undefined') sound.playbackRate = spatialParams.rate;
+        if (typeof sound.setPlaybackRateAsync === 'function') {
+          await sound.setPlaybackRateAsync(spatialParams.rate);
+        }
         if (sound.play && typeof sound.play === 'function') {
           sound.play();
         }
@@ -159,7 +167,9 @@ class SpatialAudioService {
       const spatialParams = this.calculate3DAudioParams(source.position, source.velocity);
       try {
         if (typeof source.sound.volume !== 'undefined') source.sound.volume = spatialParams.volume * source.baseVolume;
-        if (typeof source.sound.playbackRate !== 'undefined') source.sound.playbackRate = spatialParams.rate;
+        if (typeof source.sound.setPlaybackRateAsync === 'function') {
+          try { await source.sound.setPlaybackRateAsync(spatialParams.rate); } catch (_) {}
+        }
       } catch (error) {
         console.error(`Update source ${soundId} error:`, error);
       }
@@ -204,7 +214,9 @@ class SpatialAudioService {
     const spatialParams = this.calculate3DAudioParams(source.position, source.velocity);
     try {
       if (typeof source.sound.volume !== 'undefined') source.sound.volume = spatialParams.volume * source.baseVolume;
-      if (typeof source.sound.playbackRate !== 'undefined') source.sound.playbackRate = spatialParams.rate;
+      if (typeof source.sound.setPlaybackRateAsync === 'function') {
+        try { await source.sound.setPlaybackRateAsync(spatialParams.rate); } catch (_) {}
+      }
       return true;
     } catch (error) {
       console.error('Update source position error:', error);

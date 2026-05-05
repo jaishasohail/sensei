@@ -14,6 +14,7 @@ import FootPlacementService from '../services/FootPlacementService';
 import OCRService from '../services/OCRService';
 import DepthEstimationService from '../services/DepthEstimationService';
 import ARService from '../services/ARService';
+import VoiceCommandService from '../services/VoiceCommandService';
 import RealTimeCameraView, { isRealTimeCameraAvailable } from '../components/RealTimeCameraView';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../constants/theme';
 const { width, height } = Dimensions.get('window');
@@ -34,12 +35,63 @@ function getDetectionContentRect(viewWidth, viewHeight, aspectRatio) {
 
 const CameraViewComponent = ExpoCamera?.CameraView;
 
-function CameraWithCaptureRequest({ captureRequest, onCapture, onReady, ...props }) {
+// CameraWithCaptureRequest is a forwardRef component so that the parent can
+// call takePictureAsync on it (needed for OCR / "Read Text" button).
+const CameraWithCaptureRequest = forwardRef(function CameraWithCaptureRequest(
+  { captureRequest, onCapture, onReady, ...props },
+  externalRef
+) {
   const innerRef = useRef(null);
   const capturingRef = useRef(false);
   const lastRequestRef = useRef(0);
   const onCaptureRef = useRef(onCapture);
   onCaptureRef.current = onCapture;
+
+  // Expose takePictureAsync, captureForOCR, and resumePreview to the parent.
+  useImperativeHandle(externalRef, () => ({
+    takePictureAsync: (opts) => {
+      const cam = innerRef.current;
+      if (!cam || typeof cam.takePictureAsync !== 'function') {
+        return Promise.reject(new Error('Camera not ready'));
+      }
+      return cam.takePictureAsync(opts);
+    },
+
+    // Safe OCR capture: waits for any in-flight detection snapshot to finish,
+    // then acquires the capturingRef lock so the detection loop cannot start a
+    // new snapshot while OCR is taking its photo.
+    //
+    // Using takePictureAsync directly from handleReadText (without this lock)
+    // races with the detection-loop effect: if captureRequest was already
+    // incremented before ocrCapturingRef was set, both captures run at the same
+    // time → expo-camera throws "Camera unmounted during taking photo process".
+    captureForOCR: async (opts) => {
+      // Wait up to 1 s for any detection snapshot that is already in flight.
+      let waited = 0;
+      while (capturingRef.current && waited < 1000) {
+        await new Promise(r => setTimeout(r, 50));
+        waited += 50;
+      }
+      const cam = innerRef.current;
+      if (!cam || typeof cam.takePictureAsync !== 'function') {
+        throw new Error('Camera not ready');
+      }
+      // Hold the lock so the detection-loop effect is blocked for the duration.
+      capturingRef.current = true;
+      try {
+        return await cam.takePictureAsync(opts);
+      } finally {
+        capturingRef.current = false;
+      }
+    },
+
+    resumePreview: () => {
+      const cam = innerRef.current;
+      if (cam && typeof cam.resumePreview === 'function') {
+        return cam.resumePreview();
+      }
+    },
+  }), []);
 
   useEffect(() => {
     if (!CameraViewComponent || !captureRequest || captureRequest === lastRequestRef.current) return;
@@ -59,7 +111,10 @@ function CameraWithCaptureRequest({ captureRequest, onCapture, onReady, ...props
     }
     lastRequestRef.current = captureRequest;
     capturingRef.current = true;
-    takePicture({ base64: true, quality: 0.55, skipProcessing: true, exif: false })
+    // skipProcessing removed: expo-camera must apply EXIF rotation so decodeJpeg
+    // receives a correctly-oriented frame (Android stores JPEGs in sensor-native
+    // landscape with an EXIF rotate tag that TensorFlow.js ignores).
+    takePicture({ base64: true, quality: 0.8, exif: false })
       .then((photo) => {
         if (captureRequest <= 2) console.log('ARScreen: [CAPTURE] photo ok base64=' + !!(photo?.base64));
         if (photo?.base64) onCaptureRef.current?.(photo);
@@ -79,7 +134,7 @@ function CameraWithCaptureRequest({ captureRequest, onCapture, onReady, ...props
       onCameraReady={onReady || props.onCameraReady}
     />
   );
-}
+});
 function useCompatCameraPermissions() {
   if (typeof ExpoCamera.useCameraPermissions === 'function') {
     return ExpoCamera.useCameraPermissions();
@@ -123,8 +178,8 @@ const ARScreen = () => {
   const detectionLoopTimeoutRef = useRef(null);
   const isFocused = useIsFocused();
   const [cameraSessionKey, setCameraSessionKey] = useState(0);
-  const TENSOR_WIDTH = 320;
-  const TENSOR_HEIGHT = 240;
+  const TENSOR_WIDTH = 640;
+  const TENSOR_HEIGHT = 480;
   const [stairInfo, setStairInfo] = useState(null);
   const [surfaceInfo, setSurfaceInfo] = useState(null);
   const [hookPermission, hookRequestPermission] = useCompatCameraPermissions();
@@ -134,9 +189,14 @@ const ARScreen = () => {
   const detectionFrameCountRef = useRef(0);
   const [captureRequest, setCaptureRequest] = useState(0);
   const processCapturedPhotoRef = useRef(() => {});
+  // Prevents the detection snapshot loop from firing while OCR is capturing.
+  // Simultaneous captures cause "Camera unmounted during taking photo process".
+  const ocrCapturingRef = useRef(false);
   const lastDetectionAspectRef = useRef(DEFAULT_DETECTION_ASPECT);
   const previousFrameDetectionsRef = useRef([]);
   const useRealtimeRef = useRef(false);
+  // Per-class TTS cooldown: prevents speaking the same object class more than once every 5 s.
+  const ttsLastSpokenRef = useRef(new Map());
   useEffect(() => {
     requestCameraPermission();
     (async () => {
@@ -152,17 +212,24 @@ const ARScreen = () => {
       }
     })();
     const applyConfig = (s) => {
-      const precision = !!s.precisionMode;
       const config = {
-        scoreThreshold: precision ? 0.3 : 0.25,
-        nmsIoUThreshold: precision ? 0.5 : 0.45,
+        // 0.40 is the right floor for real phone-camera frames — at 0.55 the model
+        // returns 0 raw predictions for most frames (real-world footage is blurrier
+        // than COCO training images).  False-positive classes are still protected
+        // by FALSE_POSITIVE_CLASSES requiring ≥0.70.
+        scoreThreshold: 0.40,
+        confirmBypassThreshold: 0.55,  // ≥0.55 → shown immediately; 0.40-0.55 → needs 2 frames
+        nmsIoUThreshold: 0.45,
         perClassNMS: true,
-        smoothingFactor: precision ? 0.6 : 0.5,
-        maxDetections: s.maxDetections ?? (precision ? 20 : 25),
+        smoothingFactor: 0.50,
+        trackMaxAgeMs: 600,
+        associationIoUThreshold: 0.30,
+        minConfirmFrames: 1,
+        maxDetections: s.maxDetections ?? 15,
         horizontalFOV: s.horizontalFOV ?? 70,
         verticalFOV: s.verticalFOV ?? 60,
-        enableRefinementPass: !!s.refinementPass,
-        disableFallback: true, // Disable fallback for real-time detection
+        enableRefinementPass: false,
+        disableFallback: true,
         adaptiveThreshold: false,
       };
       try { ObjectDetectionService.setConfig(config); } catch { }
@@ -198,6 +265,34 @@ const ARScreen = () => {
       setCameraSessionKey((prev) => prev + 1);
     }
   }, [isFocused]);
+
+  // Register VoiceCommandService callbacks for AR screen control
+  useEffect(() => {
+    VoiceCommandService.setCallbacks({
+      onStartDetection: () => {
+        if (!isActiveRef.current && cameraReady) {
+          startARDetection();
+        }
+      },
+      onStopDetection: () => {
+        if (isActiveRef.current) {
+          stopARDetection();
+        }
+      },
+      onReadText: () => {
+        // Trigger OCR if available
+        if (!isOcrActive) {
+          setIsOcrActive(true);
+        }
+      },
+    });
+  }, [cameraReady]);
+
+  // Sync detected objects to VoiceCommandService for voice queries
+  useEffect(() => {
+    VoiceCommandService.setDetectedObjects(detectedObjects);
+  }, [detectedObjects]);
+
   const requestCameraPermission = async () => {
     try {
       if (typeof hookRequestPermission === 'function') {
@@ -261,11 +356,42 @@ const ARScreen = () => {
     try {
       const rawBytes = tf.util.encodeString(photo.base64, 'base64');
       let imageTensor = decodeJpeg(rawBytes, 3);
-      const [origH, origW] = imageTensor.shape;
-      const maxW = 640;
-      const maxH = 480;
-      // Preserve aspect ratio so the model sees correct proportions (portrait 1080x1440 was being squashed to 4:3 → 0 detections)
-      const scale = Math.min(maxW / origW, maxH / origH);
+      let [origH, origW] = imageTensor.shape;
+
+      // ── ORIENTATION FIX ────────────────────────────────────────────────────
+      // On Android, takePictureAsync always returns the raw sensor frame in
+      // landscape orientation (W > H) with an EXIF rotation tag that tells the
+      // OS how to display it.  tf.decodeJpeg ignores EXIF, so when the device
+      // is held in portrait the tensor has objects rotated 90° — detection sees
+      // a landscape image and raw predictions drop to 0 for most frames.
+      //
+      // Fix: when the photo is landscape but the device screen is portrait,
+      // apply the implicit EXIF 90° CW rotation manually:
+      //   transpose [H,W,C] → [W,H,C]  then  reverse axis-1 (columns)
+      // This is equivalent to rotating the pixel grid 90° clockwise.
+      if (origW > origH) {
+        const screenDims = Dimensions.get('window');
+        if (screenDims.height > screenDims.width) {
+          // Device is portrait, raw sensor frame is landscape → rotate 90° CW
+          const rotated = tf.tidy(() =>
+            tf.transpose(imageTensor, [1, 0, 2]).reverse(1)
+          );
+          imageTensor.dispose();
+          imageTensor = rotated;
+          [origH, origW] = imageTensor.shape; // update to post-rotation dimensions
+          if (detectionFrameCountRef.current <= 2) {
+            console.log('ARScreen: Applied 90° CW rotation (was landscape, device is portrait)');
+          }
+        }
+      }
+
+      // Use smaller resolution on CPU backend to keep inference time acceptable.
+      // Scale so the LONGER dimension is maxSize — this works for both landscape
+      // and portrait frames.  The old maxW/maxH (640×480) squashed a portrait
+      // frame to only ~273 px wide, making person detection unreliable.
+      const isCpuBackend = tf.getBackend() === 'cpu';
+      const maxSize = isCpuBackend ? 416 : 640;
+      const scale = maxSize / Math.max(origW, origH);
       const targetW = Math.round(origW * scale);
       const targetH = Math.round(origH * scale);
       if (targetW < 1 || targetH < 1) {
@@ -288,18 +414,12 @@ const ARScreen = () => {
       lastDetectionAspectRef.current = imgW / imgH;
       const detections = await ObjectDetectionService.detectFromTensor(imageTensor, imgW, imgH);
       imageTensor.dispose();
-      const prev = previousFrameDetectionsRef.current;
-      const HIGH_CONF = 0.4;
-      const CENTER_DIST_MAX = 0.25;
-      const filteredDetections = detections.filter((d) => {
-        if ((d.confidence ?? 0) >= HIGH_CONF) return true;
-        const dx = d.position?.center?.x ?? (d.boundingBox.x + d.boundingBox.width / 2);
-        const dy = d.position?.center?.y ?? (d.boundingBox.y + d.boundingBox.height / 2);
-        const sameClassNearby = prev.some(
-          (p) => p.class === d.class && Math.hypot((p.cx ?? 0) - dx, (p.cy ?? 0) - dy) < CENTER_DIST_MAX
-        );
-        return sameClassNearby;
-      });
+
+      // ObjectDetectionService already enforces scoreThreshold + temporal consistency.
+      // The only extra guard here is a redundant confidence floor for defence-in-depth.
+      const DISPLAY_THRESHOLD = 0.40;
+      const filteredDetections = detections.filter(d => (d.confidence ?? 0) >= DISPLAY_THRESHOLD);
+
       previousFrameDetectionsRef.current = filteredDetections.map((d) => ({
         class: d.class,
         cx: d.position?.center?.x ?? (d.boundingBox.x + d.boundingBox.width / 2),
@@ -332,14 +452,22 @@ const ARScreen = () => {
               }
             }
           }
-        const priorityObjects = filteredDetections
-          .filter(d => ObjectDetectionService.getPriorityLevel(d) === 'critical')
-          .sort((a, b) => a.distance - b.distance);
-        if (priorityObjects.length > 0) {
-          const obj = priorityObjects[0];
-          TextToSpeechService.speak(ObjectDetectionService.getObjectDescription(obj));
-          SpatialAudioService.playDirectionalBeep(obj.position.angle, obj.distance);
+        // ── Voice assistance: announce ALL detected objects by hazard level ──
+        // announceDetectedObjects handles per-class cooldowns internally so TTS
+        // never floods the user. Critical objects get 4 s cooldown, others longer.
+        ObjectDetectionService.announceDetectedObjects(
+          filteredDetections,
+          (text, opts, priority) => TextToSpeechService.speak(text, opts, priority)
+        );
+        // Spatial audio beep for the closest critical/warning object
+        const topHazard = filteredDetections
+          .filter(d => ObjectDetectionService.getPriorityLevel(d) !== 'info')
+          .sort((a, b) => a.distance - b.distance)[0];
+        if (topHazard) {
+          SpatialAudioService.playDirectionalBeep(topHazard.position.angle, topHazard.distance);
         }
+        // Log to server (non-blocking)
+        ObjectDetectionService.logDetectionsToServer(filteredDetections).catch(() => {});
       } else {
         if (runDepthAndFoot && FootPlacementService.isMonitoring()) FootPlacementService.processFrame([], null);
         previousFrameDetectionsRef.current = [];
@@ -361,6 +489,8 @@ const ARScreen = () => {
 
   const runFrameDetection = () => {
     if (detectionInFlightRef.current) return;
+    // Don't fire a snapshot capture while OCR is taking its own photo.
+    if (ocrCapturingRef.current) return;
     detectionFrameCountRef.current += 1;
     setDetectionFrameCount(detectionFrameCountRef.current);
     setDetectionStatus('Capturing...');
@@ -373,7 +503,9 @@ const ARScreen = () => {
   const handleCapture = (photo) => {
     processCapturedPhotoRef.current(photo);
     if (isActiveRef.current && isFocused) {
-      detectionLoopTimeoutRef.current = setTimeout(scheduleDetectionLoop, 250);
+      // CPU backend is much slower — give it breathing room; GPU runs tight loop
+      const loopDelay = tf.getBackend() === 'cpu' ? 500 : 100;
+      detectionLoopTimeoutRef.current = setTimeout(scheduleDetectionLoop, loopDelay);
     }
   };
 
@@ -408,7 +540,7 @@ const ARScreen = () => {
       if (modelReady) {
         useRealtimeRef.current = isRealTimeCameraAvailable();
         ObjectDetectionService.setCameraRef(cameraRef);
-        ObjectDetectionService.setConfig({ scoreThreshold: 0.25 });
+        ObjectDetectionService.setConfig({ scoreThreshold: 0.40, confirmBypassThreshold: 0.55 });
         setIsActive(true);
         isActiveRef.current = true;
         if (useRealtimeRef.current) {
@@ -548,17 +680,16 @@ const ARScreen = () => {
           }
 
           if (detections.length > 0) {
-            // AR anchors are disabled to prevent GL context conflicts with camera preview
-            // Visual overlays are handled via React Native views (objectMarker styles)
-            // ARService 3D rendering can be re-enabled later with a separate GL context
-
-            const priorityObjects = detections
-              .filter(d => ObjectDetectionService.getPriorityLevel(d) === 'critical')
-              .sort((a, b) => a.distance - b.distance);
-            if (priorityObjects.length > 0) {
-              const obj = priorityObjects[0];
-              TextToSpeechService.speak(ObjectDetectionService.getObjectDescription(obj));
-              SpatialAudioService.playDirectionalBeep(obj.position.angle, obj.distance);
+            // ── Voice assistance for all hazard levels ──
+            ObjectDetectionService.announceDetectedObjects(
+              detections,
+              (text, opts, priority) => TextToSpeechService.speak(text, opts, priority)
+            );
+            const topHazard = detections
+              .filter(d => ObjectDetectionService.getPriorityLevel(d) !== 'info')
+              .sort((a, b) => a.distance - b.distance)[0];
+            if (topHazard) {
+              SpatialAudioService.playDirectionalBeep(topHazard.position.angle, topHazard.distance);
             }
           }
         } catch (err) {
@@ -612,6 +743,7 @@ const ARScreen = () => {
       isActiveRef.current = false;
       setDetectedObjects([]);
       previousFrameDetectionsRef.current = [];
+      ttsLastSpokenRef.current.clear();
       setFootWarnings([]);
       setOcrText(null);
       setIsOcrActive(false);
@@ -653,41 +785,69 @@ const ARScreen = () => {
   };
 
   const handleReadText = async () => {
+    // Don't attempt OCR if the screen is no longer focused — the camera may
+    // be in the middle of unmounting, which causes the "Camera unmounted
+    // during taking photo process" error.
+    if (!isFocused) return;
     try {
       const cam = cameraRef.current;
-      if (!cam || typeof cam.takePictureAsync !== 'function') {
-        Alert.alert('Camera unavailable', 'Camera reference not available');
+      if (!cam || typeof cam.captureForOCR !== 'function') {
+        Alert.alert('Camera unavailable', 'Camera is not ready yet — please wait a moment and try again.');
         return;
       }
 
       setIsOcrActive(true);
-      TextToSpeechService.speak('Capturing text');
+      // Signal the detection loop not to fire new captures.
+      ocrCapturingRef.current = true;
 
-      const photo = await cam.takePictureAsync({
-        base64: true,
-        quality: 0.8,
-      });
-      try {
-        if (typeof cam.resumePreview === 'function') {
-          await cam.resumePreview();
-        }
-      } catch { }
-
-      const result = await OCRService.readTextFromImage(photo.base64);
-
-      if (result.text && result.text.trim()) {
-        setOcrText(result.text);
-        await TextToSpeechService.speak(`Text detected: ${result.text}`);
-      } else {
-        await TextToSpeechService.speak('No text detected in image');
+      // ── 1. Health check FIRST ────────────────────────────────────────────────
+      // We MUST verify the server is reachable before taking a photo or saying
+      // "Capturing text".  Without this check the user would hear "Capturing
+      // text" immediately followed by "Server not running" — a confusing and
+      // unrecoverable UX sequence that we guarantee can never happen here.
+      const serverAlive = await OCRService.checkServerHealth();
+      if (!serverAlive) {
+        TextToSpeechService.speak('Server not running. Please start the server and try again.');
+        Alert.alert(
+          'Server unavailable',
+          'Could not reach the AI server. Make sure it is running and you are on the same Wi-Fi network.'
+        );
+        return; // goes to finally block — resets ocrCapturingRef and isOcrActive
       }
 
-      setIsOcrActive(false);
+      // ── 2. Server confirmed up — now speak and capture ───────────────────────
+      TextToSpeechService.speak('Capturing text');
+
+      const photo = await cam.captureForOCR({
+        base64: true,
+        quality: 0.9,
+      });
+
+      // skipHealthCheck: true — we already verified above; no need to pay for
+      // a second round-trip before sending the image payload.
+      const result = await OCRService.readTextFromImage(photo.base64, { skipHealthCheck: true });
+
+      if (result.serverDown) {
+        // Server went down in the narrow window between health check and OCR
+        // call — extremely rare but handled gracefully.
+        TextToSpeechService.speak('Server became unavailable. Please try again.');
+        Alert.alert('Server unavailable', 'The server stopped responding. Make sure it is still running.');
+      } else if (result.isTimeout) {
+        TextToSpeechService.speak('Reading text timed out. The server may be starting up. Please try again in a moment.');
+      } else if (result.text && result.text.trim()) {
+        setOcrText(result.text);
+        TextToSpeechService.speak(`Text detected: ${result.text}`);
+      } else {
+        TextToSpeechService.speak('No text detected in image');
+      }
     } catch (error) {
       console.error('OCR error:', error);
-      setIsOcrActive(false);
       Alert.alert('Error', 'Failed to read text from camera');
       TextToSpeechService.speak('Failed to read text');
+    } finally {
+      // Always resume detection loop and clear OCR state.
+      ocrCapturingRef.current = false;
+      setIsOcrActive(false);
     }
   };
   if (hasPermission === null) {
@@ -747,6 +907,7 @@ const ARScreen = () => {
       ) : CameraViewComponent ? (
         <CameraWithCaptureRequest
           key={cameraKey}
+          ref={cameraRef}
           {...cameraProps}
           captureRequest={captureRequest}
           onCapture={handleCapture}
@@ -806,7 +967,7 @@ const ARScreen = () => {
             >
               <View style={[styles.objectLabel, { backgroundColor: markerColor }]}>
                 <Text style={styles.objectLabelText}>
-                  {obj.class}
+                  {obj.class} {Math.round((obj.confidence ?? 0) * 100)}%
                 </Text>
                 <Text style={styles.objectLabelDistance}>
                   {obj.distance.toFixed(1)}m {obj.position.relative}

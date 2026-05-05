@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import { requireAuth } from '../middleware/auth.js';
 import { 
   User, 
@@ -74,10 +75,26 @@ router.put('/preferences', requireAuth, async (req, res) => {
 
 router.get('/emergency-contacts', requireAuth, async (req, res) => {
   try {
-    const contacts = await EmergencyContact.find({ user_id: req.user.id });
+    // Explicitly cast req.user.id to ObjectId.  jwt.sign({ id: user._id })
+    // serialises the Mongoose ObjectId as a hex string; jwt.verify returns that
+    // string in payload.id.  Mongoose 8 auto-casts valid hex strings, but an
+    // explicit cast gives a clear 400 instead of an opaque 500 when the token
+    // carries a malformed id (e.g. old token signed before the id field was set).
+    let userId;
+    try {
+      userId = new mongoose.Types.ObjectId(String(req.user.id));
+    } catch (castErr) {
+      console.error('GET /emergency-contacts — invalid user id in token:',
+        JSON.stringify(req.user.id), castErr.message);
+      return res.status(400).json({ error: 'Invalid user ID in token' });
+    }
+    const contacts = await EmergencyContact.find({ user_id: userId });
     res.json(contacts);
   } catch (error) {
-    console.error('Get emergency contacts error:', error);
+    console.error('Get emergency contacts error:',
+      error.name, error.message,
+      '| user_id type:', typeof req.user?.id,
+      '| user_id value:', JSON.stringify(req.user?.id));
     res.status(500).json({ error: 'Failed to get emergency contacts' });
   }
 });

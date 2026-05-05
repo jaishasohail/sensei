@@ -132,20 +132,66 @@ class OCRService {
     return stableText;
   }
 
-  async readTextFromImage(imageBase64) {
+  /**
+   * Public liveness check — callers can run this before attempting OCR so
+   * they can give the user early feedback without having to go through
+   * readTextFromImage first.
+   */
+  checkServerHealth() {
+    return this._checkServerHealth();
+  }
+
+  /**
+   * Quick liveness check against /api/health with a 3 s timeout.
+   * Returns true when the server is reachable, false otherwise.
+   */
+  async _checkServerHealth() {
     try {
-      
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
+      const t = setTimeout(() => controller.abort(), 3000);
+      const res = await fetch(`${this.apiBaseUrl}/api/health`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      clearTimeout(t);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async readTextFromImage(imageBase64, { skipHealthCheck = false } = {}) {
+    try {
+      // Fast server liveness check before sending the large image payload.
+      // If the server is down we tell the caller immediately (< 3 s) instead
+      // of waiting for the full OCR timeout (120 s).
+      // Pass skipHealthCheck: true when the caller already ran checkServerHealth()
+      // to avoid paying for two HTTP round-trips.
+      if (!skipHealthCheck) {
+        const serverAlive = await this._checkServerHealth();
+        if (!serverAlive) {
+          console.warn('OCRService: Server unreachable (health-check failed)');
+          return {
+            text: '',
+            confidence: 0.0,
+            length: 0,
+            error: 'Server not running. Please start the server and try again.',
+            isOffline: true,
+            serverDown: true,
+          };
+        }
+      }
+
+      // 120 s timeout: on first server start Tesseract must download
+      // eng.traineddata (~10 MB) from the CDN even with cachePath set (only
+      // once — subsequent starts load from disk in ~0.5 s).  120 s is a safe
+      // ceiling for the very first download on a slow connection.
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120000);
       
      
-      let processedImage = imageBase64;
-      if (imageBase64 && imageBase64.length > 1000000) {
-       
-        console.log('OCRService: Large image detected, truncating for performance');
-        processedImage = imageBase64.substring(0, 1000000);
-      }
-      
+      // Send the image as-is — the server handles size.  Truncating a base64
+      // string by character count produces a broken JPEG and causes OCR to fail.
       const res = await fetch(`${this.apiBaseUrl}/api/ai/ocr`, {
         method: 'POST',
         headers: { 
@@ -153,7 +199,7 @@ class OCRService {
           'Accept': 'application/json'
         },
         body: JSON.stringify({ 
-          image: processedImage,
+          image: imageBase64,
           save: false
         }),
         signal: controller.signal,

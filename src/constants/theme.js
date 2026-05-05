@@ -19,6 +19,7 @@ export const COLORS = {
   accentDark: '#0891B2',
   gradient1: '#6366F1',
   gradient2: '#8B5CF6',
+  white: '#FFFFFF',
 };
 export const SPACING = {
   xs: 4,

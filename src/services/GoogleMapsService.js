@@ -1,9 +1,12 @@
 import * as Location from 'expo-location';
 import TextToSpeechService from './TextToSpeechService';
 import SpatialAudioService from './SpatialAudioService';
+import { GOOGLE_MAPS_API_KEY } from '../constants/config';
 class GoogleMapsService {
   constructor() {
-    this.apiKey = null; 
+    this.apiKey = GOOGLE_MAPS_API_KEY && GOOGLE_MAPS_API_KEY !== 'YOUR_GOOGLE_MAPS_API_KEY_HERE'
+      ? GOOGLE_MAPS_API_KEY
+      : null;
     this.baseUrl = 'https://maps.googleapis.com/maps/api';
     this.isNavigating = false;
     this.currentRoute = null;
@@ -16,40 +19,116 @@ class GoogleMapsService {
   setApiKey(key) {
     this.apiKey = key;
   }
-  async searchPlace(query, location = null) {
+  // ── Nominatim (OpenStreetMap) free geocoder ─────────────────────────────────
+  // No API key required.  Supports both place-name search ("Starbucks") and
+  // address search ("123 Main St").  Rate limit: 1 req/s — fine for a single user.
+  // When a GPS location is provided the search is biased toward nearby results
+  // via a viewbox (but not strictly bounded so far-away matches are still returned).
+  async _searchNominatim(query, location = null) {
     try {
-      if (!this.apiKey) {
-        console.warn('Google Maps API key not set. Using mock results.');
-        return this.getMockSearchResults(query);
-      }
       const params = new URLSearchParams({
-        query,
-        key: this.apiKey,
-        fields: 'name,formatted_address,geometry,place_id,types'
+        q: query,
+        format: 'json',
+        limit: '5',
+        addressdetails: '1',
       });
       if (location) {
-        params.append('location', `${location.latitude},${location.longitude}`);
-        params.append('radius', '5000'); 
+        // 0.1° ≈ 11 km — wide enough to catch nearby results without excluding city-level searches
+        const d = 0.1;
+        params.append('viewbox', [
+          location.longitude - d,
+          location.latitude  + d,
+          location.longitude + d,
+          location.latitude  - d,
+        ].join(','));
+        params.append('bounded', '0'); // prefer viewbox but don't exclude outside results
       }
-      const response = await fetch(`${this.baseUrl}/place/textsearch/json?${params}`);
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?${params}`,
+        { headers: { 'User-Agent': 'SenseiBlindAssistantApp/1.0 (accessibility tool)' } }
+      );
       const data = await response.json();
-      if (data.status === 'OK') {
-        return data.results.map(result => ({
-          name: result.name,
-          formatted_address: result.formatted_address,
-          geometry: result.geometry,
-          place_id: result.place_id,
-          types: result.types,
-          latitude: result.geometry.location.lat,
-          longitude: result.geometry.location.lng
+      if (Array.isArray(data) && data.length > 0) {
+        return data.map(item => ({
+          name: item.namedetails?.name || item.display_name.split(',')[0].trim(),
+          formatted_address: item.display_name,
+          geometry: { location: { lat: parseFloat(item.lat), lng: parseFloat(item.lon) } },
+          latitude:  parseFloat(item.lat),
+          longitude: parseFloat(item.lon),
+          place_id:  String(item.place_id),
         }));
-      } else {
-        console.warn('Place search error:', data.status);
-        return this.getMockSearchResults(query);
       }
+      return [];
     } catch (error) {
-      console.error('Search place error:', error);
-      return this.getMockSearchResults(query);
+      console.warn('Nominatim search error:', error.message);
+      return [];
+    }
+  }
+
+  async searchPlace(query, location = null) {
+    try {
+      // ── 1. Nominatim (OSM) — free, no API key, works for place names & addresses
+      const nominatimResults = await this._searchNominatim(query, location);
+      if (nominatimResults.length > 0) {
+        console.log('[Maps] Nominatim returned', nominatimResults.length, 'result(s)');
+        return nominatimResults;
+      }
+      console.log('[Maps] Nominatim returned 0 results, trying Google APIs');
+
+      // ── 2. Google Places Text Search — better for business names/chains
+      if (this.apiKey) {
+        // NOTE: the `fields` parameter is NOT supported by the Text Search
+        // endpoint; omit it so the API returns the full default response.
+        const params = new URLSearchParams({ query, key: this.apiKey });
+        if (location) {
+          params.append('location', `${location.latitude},${location.longitude}`);
+          params.append('radius', '5000');
+        }
+        try {
+          const response = await fetch(`${this.baseUrl}/place/textsearch/json?${params}`);
+          const data = await response.json();
+          if (data.status === 'OK') {
+            console.log('[Maps] Google Places returned', data.results.length, 'result(s)');
+            return data.results.map(result => ({
+              name: result.name,
+              formatted_address: result.formatted_address,
+              geometry: result.geometry,
+              place_id: result.place_id,
+              types: result.types,
+              latitude: result.geometry.location.lat,
+              longitude: result.geometry.location.lng,
+            }));
+          }
+          console.warn(
+            '[Maps] Places API error:',
+            data.status || '(no status)',
+            data.error_message ? '— ' + data.error_message : ''
+          );
+        } catch (placesErr) {
+          console.warn('[Maps] Places API fetch failed:', placesErr.message);
+        }
+
+        // ── 3. Google Geocoding — reliable for exact addresses, less useful for place names
+        const geocodeResult = await this.geocodeAddress(query);
+        if (geocodeResult) {
+          console.log('[Maps] Geocoding fallback succeeded');
+          return [{
+            name: query,
+            formatted_address: geocodeResult.formattedAddress,
+            geometry: { location: { lat: geocodeResult.latitude, lng: geocodeResult.longitude } },
+            latitude:  geocodeResult.latitude,
+            longitude: geocodeResult.longitude,
+            place_id:  null,
+          }];
+        }
+      }
+
+      // All sources failed
+      console.warn('[Maps] All search sources returned 0 results for:', query);
+      return [];
+    } catch (error) {
+      console.error('[Maps] searchPlace unexpected error:', error);
+      return [];
     }
   }
   async getNearbyPlaces(location, type = 'restaurant', radius = 1000) {
@@ -86,59 +165,195 @@ class GoogleMapsService {
       return [];
     }
   }
-  getMockSearchResults(query) {
-    return [
-      {
-        name: `${query} - Result 1`,
-        formatted_address: '123 Main Street, City, Country',
-        geometry: {
-          location: { lat: 0, lng: 0 }
-        },
-        latitude: 0.005,
-        longitude: 0.005,
-        place_id: 'mock_1'
-      },
-      {
-        name: `${query} - Result 2`,
-        formatted_address: '456 Oak Avenue, City, Country',
-        geometry: {
-          location: { lat: 0, lng: 0 }
-        },
-        latitude: 0.010,
-        longitude: 0.010,
-        place_id: 'mock_2'
-      }
-    ];
+
+  // ── OSRM (Open Source Routing Machine) ──────────────────────────────────────
+  // Free, no API key, no billing required.  Uses OpenStreetMap data.
+  // Public demo server — fine for single-user personal apps.
+  // Docs: https://project-osrm.org/
+
+  // Map app travel-mode strings to OSRM profile names
+  _osrmProfile(mode) {
+    if (mode === 'driving')   return 'car';
+    if (mode === 'bicycling') return 'bike';
+    return 'foot'; // walking, transit, or any unknown mode
   }
-  async getDirections(origin, destination, options = {}) {
-    try {
-      if (!this.apiKey) {
-        console.warn('Google Maps API key not set. Using fallback navigation.');
-        return this.getFallbackDirections(origin, destination);
-      }
-      const params = new URLSearchParams({
-        origin: `${origin.latitude},${origin.longitude}`,
-        destination: typeof destination === 'string' ? destination : `${destination.latitude},${destination.longitude}`,
-        mode: options.mode || this.travelMode,
-        key: this.apiKey,
-        alternatives: true,
-        departure_time: 'now',
-        traffic_model: 'best_guess'
-      });
-      if (this.avoidTolls) params.append('avoid', 'tolls');
-      if (this.avoidHighways) params.append('avoid', 'highways');
-      const response = await fetch(`${this.baseUrl}/directions/json?${params}`);
-      const data = await response.json();
-      if (data.status === 'OK' && data.routes.length > 0) {
-        return this.parseGoogleRoute(data.routes[0]);
-      } else {
-        console.error('Google Maps API error:', data.status);
-        return this.getFallbackDirections(origin, destination);
-      }
-    } catch (error) {
-      console.error('Get directions error:', error);
-      return this.getFallbackDirections(origin, destination);
+
+  // Build a human-readable instruction string from an OSRM step
+  _osrmInstruction(step) {
+    const type     = step.maneuver?.type     || 'continue';
+    const modifier = step.maneuver?.modifier || '';
+    const street   = step.name
+      ? ` onto ${step.name}`
+      : (step.ref ? ` onto ${step.ref}` : '');
+    const towards  = step.destinations
+      ? ` towards ${step.destinations.split(',')[0].trim()}`
+      : '';
+
+    switch (type) {
+      case 'depart':
+        return `Head ${modifier || 'straight'}${step.name ? ` on ${step.name}` : ''}`;
+      case 'arrive':
+        return 'You have arrived at your destination';
+      case 'turn':
+        return `Turn ${modifier.replace(/-/g, ' ')}${street}${towards}`;
+      case 'continue':
+      case 'new name':
+        return `Continue${street}${towards}`;
+      case 'merge':
+        return `Merge${modifier ? ' ' + modifier.replace(/-/g, ' ') : ''}${street}`;
+      case 'on ramp':
+        return `Take the on-ramp${modifier ? ' to the ' + modifier.replace(/-/g, ' ') : ''}${towards}`;
+      case 'off ramp':
+        return `Take the off-ramp${modifier ? ' to the ' + modifier.replace(/-/g, ' ') : ''}${towards}`;
+      case 'fork':
+        return `Keep ${modifier.includes('left') ? 'left' : 'right'} at the fork${street}`;
+      case 'end of road':
+        return `Turn ${modifier.replace(/-/g, ' ')} at the end of the road${street}`;
+      case 'roundabout':
+      case 'rotary':
+        return `Enter the roundabout${street}`;
+      case 'use lane':
+        return `Use the correct lane${street}`;
+      default:
+        return step.name ? `Continue on ${step.name}` : 'Continue straight';
     }
+  }
+
+  // Map OSRM maneuver to the icon key used by NavigationScreen.maneuverIcon()
+  _osrmManeuver(type = '', modifier = '') {
+    if (type === 'arrive')                          return 'arrive';
+    if (type === 'roundabout' || type === 'rotary') return 'roundabout';
+    if (type === 'merge')                           return 'merge';
+    if (type === 'turn' || type === 'end of road') {
+      if (modifier.includes('left'))  return 'turn-left';
+      if (modifier.includes('right')) return 'turn-right';
+      if (modifier === 'uturn')       return 'uturn-left';
+    }
+    return 'straight';
+  }
+
+  // Parse OSRM route response into the same shape as parseGoogleRoute()
+  // Returns coordinates[] instead of polyline string (no encoding/decoding needed)
+  _parseOSRMRoute(data, destination) {
+    const route = data.routes[0];
+    const leg   = route.legs[0];
+
+    const steps = leg.steps.map((step, index) => {
+      const [sLon, sLat] = step.maneuver.location;
+      // endLocation = last coordinate of this step's own geometry
+      const geomCoords = step.geometry?.coordinates ?? [];
+      const [eLon, eLat] = geomCoords.length > 0
+        ? geomCoords[geomCoords.length - 1]
+        : step.maneuver.location;
+      return {
+        instruction:   this._osrmInstruction(step),
+        distance:      step.distance,
+        duration:      step.duration,
+        startLocation: { lat: sLat, lng: sLon },
+        endLocation:   { lat: eLat, lng: eLon },
+        maneuver:      this._osrmManeuver(step.maneuver?.type, step.maneuver?.modifier),
+        stepNumber:    index + 1,
+      };
+    });
+
+    // GeoJSON standard is [longitude, latitude] — swap to {latitude, longitude}
+    const coordinates = (route.geometry?.coordinates ?? []).map(([lon, lat]) => ({
+      latitude:  lat,
+      longitude: lon,
+    }));
+
+    return {
+      steps,
+      totalDistance:   route.distance,
+      totalDuration:   route.duration,
+      startAddress:    data.waypoints?.[0]?.name || 'Current Location',
+      endAddress:      data.waypoints?.[1]?.name || destination?.name || 'Destination',
+      coordinates,     // ready-to-use array for MapView Polyline
+      polyline:        null,
+      bounds:          null,
+      trafficDuration: route.duration,
+    };
+  }
+
+  async _getDirectionsOSRM(origin, destination, mode) {
+    try {
+      if (typeof destination === 'string') return null; // can't use raw string with OSRM
+
+      const profile = this._osrmProfile(mode);
+      const url = [
+        `https://router.project-osrm.org/route/v1/${profile}/`,
+        `${origin.longitude},${origin.latitude}`,
+        `;`,
+        `${destination.longitude},${destination.latitude}`,
+        `?steps=true&geometries=geojson&overview=full&annotations=false`,
+      ].join('');
+
+      console.log(`[Maps] OSRM ${profile}: ${origin.latitude.toFixed(4)},${origin.longitude.toFixed(4)} → ${destination.latitude.toFixed(4)},${destination.longitude.toFixed(4)}`);
+      const response = await fetch(url, {
+        headers: { 'User-Agent': 'SenseiBlindAssistantApp/1.0 (accessibility tool)' },
+      });
+      const data = await response.json();
+
+      if (data.code === 'Ok' && data.routes?.length > 0) {
+        const r = data.routes[0];
+        console.log(`[Maps] OSRM OK — ${r.legs[0].steps.length} steps, ${(r.distance / 1000).toFixed(1)} km, ${Math.round(r.duration / 60)} min`);
+        return this._parseOSRMRoute(data, destination);
+      }
+
+      console.warn('[Maps] OSRM returned:', data.code, data.message || '');
+      return null;
+    } catch (err) {
+      console.warn('[Maps] OSRM request failed:', err.message);
+      return null;
+    }
+  }
+
+  async getDirections(origin, destination, options = {}) {
+    const travelMode = options.mode || this.travelMode;
+
+    // ── 1. OSRM — free, no API key, no billing, works everywhere ────────────
+    const osrmRoute = await this._getDirectionsOSRM(origin, destination, travelMode);
+    if (osrmRoute) return osrmRoute;
+    console.log('[Maps] OSRM failed, trying Google Directions API');
+
+    // ── 2. Google Directions API — requires billing (fallback only) ──────────
+    if (this.apiKey) {
+      try {
+        const destParam = typeof destination === 'string'
+          ? destination
+          : `${destination.latitude},${destination.longitude}`;
+
+        const params = new URLSearchParams({
+          origin:      `${origin.latitude},${origin.longitude}`,
+          destination: destParam,
+          mode:        travelMode,
+          language:    'en',
+          key:         this.apiKey,
+        });
+        // departure_time / traffic_model are driving-only; omit for other modes
+        if (travelMode === 'driving') {
+          params.append('departure_time', 'now');
+          params.append('traffic_model',  'best_guess');
+        }
+        if (this.avoidTolls)    params.append('avoid', 'tolls');
+        if (this.avoidHighways) params.append('avoid', 'highways');
+
+        const response = await fetch(`${this.baseUrl}/directions/json?${params}`);
+        const data     = await response.json();
+
+        if (data.status === 'OK' && data.routes.length > 0) {
+          console.log(`[Maps] Google Directions OK — ${data.routes[0].legs[0].steps.length} steps`);
+          return this.parseGoogleRoute(data.routes[0]);
+        }
+        console.error('[Maps] Google Directions error:', data.status, data.error_message || '');
+      } catch (err) {
+        console.error('[Maps] Google Directions threw:', err.message);
+      }
+    }
+
+    // ── 3. Straight-line last resort ─────────────────────────────────────────
+    console.warn('[Maps] All direction sources failed — using straight-line fallback');
+    return this.getFallbackDirections(origin, destination);
   }
   parseGoogleRoute(route) {
     const leg = route.legs[0];
@@ -361,18 +576,20 @@ class GoogleMapsService {
     );
     return {
       steps: [{
-        instruction: `Head ${this.getCardinalDirection(bearing)} for ${distance.toFixed(0)} meters`,
+        instruction: `Head ${this.getCardinalDirection(bearing)} for ${Math.round(distance)} meters`,
         distance,
-        duration: distance / 1.4, 
-        startLocation: origin,
-        endLocation: destination,
+        duration: distance / 1.4,
+        startLocation: { lat: origin.latitude,      lng: origin.longitude },
+        // Use { lat, lng } — same format as parseGoogleRoute — so step-tracking
+        // math (calculateDistance using .lat / .lng) never receives undefined.
+        endLocation:   { lat: destination.latitude, lng: destination.longitude },
         maneuver: 'straight',
         stepNumber: 1
       }],
       totalDistance: distance,
       totalDuration: distance / 1.4,
       startAddress: 'Current Location',
-      endAddress: 'Destination'
+      endAddress: destination.name || destination.address || 'Destination'
     };
   }
   calculateDistance(lat1, lon1, lat2, lon2) {

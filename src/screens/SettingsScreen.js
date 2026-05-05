@@ -9,6 +9,9 @@ import SettingsService from '../services/SettingsService';
 import ObjectDetectionService from '../services/ObjectDetectionService';
 import EmergencyService from '../services/EmergencyService';
 import ApiService from '../services/ApiService';
+import WearablesService from '../services/WearablesService';
+import EmotionDetectionService from '../services/EmotionDetectionService';
+import OfflineModeService from '../services/OfflineModeService';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../constants/theme';
 const SettingsScreen = ({ navigation }) => {
   const [audioEnabled, setAudioEnabled] = useState(true);
@@ -23,6 +26,7 @@ const SettingsScreen = ({ navigation }) => {
   const [emergencyContactsCount, setEmergencyContactsCount] = useState(0);
   const [userProfile, setUserProfile] = useState(null);
   const [userPreferences, setUserPreferences] = useState(null);
+  const [batteryLevel, setBatteryLevel] = useState(null);   // null = not yet fetched
   useEffect(() => {
     initializeSettings();
   }, []);
@@ -33,6 +37,13 @@ const SettingsScreen = ({ navigation }) => {
     loadEmergencyContactsCount();
     loadDetectionSettings();
     await loadUserData();
+    // Fetch phone battery level on mount
+    try {
+      const level = await WearablesService.getPhoneBatteryLevel();
+      setBatteryLevel(level);
+    } catch (_) {
+      setBatteryLevel(null);
+    }
   };
 
   const loadUserData = async () => {
@@ -302,6 +313,9 @@ const SettingsScreen = ({ navigation }) => {
           <Text style={styles.deviceCount}>
             Connected Devices: {connectedDevices.length}
           </Text>
+          <Text style={styles.batteryText}>
+            Battery: {batteryLevel !== null ? `${batteryLevel}%` : 'Unknown'}
+          </Text>
         </View>
         {connectedDevices.map((device, index) => (
           <View key={index} style={styles.deviceItem}>
@@ -338,6 +352,57 @@ const SettingsScreen = ({ navigation }) => {
           )}
         </View>
       </Card>
+      {/* ── Emotion Detection Test ─────────────────────────────────── */}
+      <Card
+        title="Emotion Detection Test"
+        variant="default"
+        icon={<MaterialCommunityIcons name="emoticon-outline" size={24} color={COLORS.info} />}
+      >
+        <Text style={styles.settingDescription}>
+          Tests the offline heuristic (no server needed) and the online path
+          (requires server + useCloud enabled).
+        </Text>
+        <View style={styles.buttonSpacing} />
+        <Button
+          title="Test — No Face"
+          onPress={async () => {
+            const result = await EmotionDetectionService.detectEmotion('test_base64', { faceCount: 0 });
+            Alert.alert('No-face result', JSON.stringify(result, null, 2));
+          }}
+          variant="secondary"
+          size="medium"
+          fullWidth
+          style={styles.actionButton}
+        />
+        <View style={styles.buttonSpacing} />
+        <Button
+          title="Test — Face Present (offline)"
+          onPress={async () => {
+            const result = await EmotionDetectionService.detectEmotionFromCamera('test_base64', { faceCount: 1 });
+            Alert.alert('Offline face result', JSON.stringify(result, null, 2));
+          }}
+          variant="secondary"
+          size="medium"
+          fullWidth
+          style={styles.actionButton}
+        />
+        <View style={styles.buttonSpacing} />
+        <Button
+          title="Test — Online path (server must be running)"
+          onPress={async () => {
+            // Temporarily enable cloud so the online branch fires
+            OfflineModeService.setUseCloud(true);
+            const result = await EmotionDetectionService.detectEmotion('test_base64', { faceCount: 1 });
+            OfflineModeService.setUseCloud(false);
+            Alert.alert('Online result', JSON.stringify(result, null, 2));
+          }}
+          variant="outlined"
+          size="medium"
+          fullWidth
+          style={styles.actionButton}
+        />
+      </Card>
+
       <Card 
         title="About" 
         variant="default"
@@ -471,6 +536,11 @@ const styles = StyleSheet.create({
   deviceCount: {
     fontSize: FONT_SIZES.sm,
     color: COLORS.textSecondary,
+  },
+  batteryText: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textSecondary,
+    marginTop: SPACING.xs / 2,
   },
   deviceItem: {
     flexDirection: 'row',

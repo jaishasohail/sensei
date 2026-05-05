@@ -1,7 +1,12 @@
+// ─── Google Maps API Key ──────────────────────────────────────────────────────
+// Replace the empty string below with your actual key after following the
+// "How to get a Google Maps API key" guide at the bottom of this file.
+export const GOOGLE_MAPS_API_KEY = 'AIzaSyCfa49gfZiFnkUke_Bzl-Pj8pbUKNI_lxg';
+
 export const APP_NAME = 'SENSEI';
 export const APP_VERSION = '1.0.0';
 export const APP_DESCRIPTION = 'Smart Environmental Navigation System for Enhanced Independence';
-export const API_BASE_URL = 'http://192.168.18.106:3001';
+export const API_BASE_URL = 'http://192.168.18.4:3001';
 export const NAVIGATION_CONSTANTS = {
   UPDATE_INTERVAL: 5000,
   MIN_ACCURACY: 10,
@@ -11,8 +16,8 @@ export const NAVIGATION_CONSTANTS = {
 export const DETECTION_CONSTANTS = {
   DETECTION_INTERVAL: 1000,
   MAX_DETECTION_DISTANCE: 10,
-  CONFIDENCE_THRESHOLD: 0.7,
-  MAX_OBJECTS_TRACKED: 10,
+  CONFIDENCE_THRESHOLD: 0.35,
+  MAX_OBJECTS_TRACKED: 15,
 };
 export const AUDIO_CONSTANTS = {
   DEFAULT_VOLUME: 1.0,

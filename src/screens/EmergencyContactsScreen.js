@@ -35,16 +35,44 @@ const EmergencyContactsScreen = ({ navigation }) => {
   const loadEmergencyContacts = async () => {
     try {
       if (ApiService.token) {
-        const contacts = await ApiService.getEmergencyContacts();
-        setEmergencyContacts(contacts);
+        const apiContacts = await ApiService.getEmergencyContacts();
+        // Normalise the API shape  { phone_number } → local shape { phone }
+        // so that both the FlatList (which renders item.phone) and
+        // EmergencyService (which reads the `phone` field for SMS/WhatsApp)
+        // always see consistent data without requiring a separate API round-trip
+        // at voice-command time.
+        const normalized = apiContacts.map((c, i) => ({
+          id:    c.id   != null ? String(c.id) : `api-${Date.now()}-${i}`,
+          name:  c.name || '',
+          phone: c.phone_number ?? c.phone ?? '',
+        }));
+        // Keep EmergencyService in-memory array in sync so voice commands
+        // ("share location", "contact emergency", etc.) find the right contacts
+        // without having to call the API themselves.
+        EmergencyService.emergencyContacts = normalized;
+        // Mark as initialised so that a subsequent initialize() call (e.g.
+        // from a voice command handler) returns early and does NOT overwrite
+        // the contacts we just loaded — even if initialize() previously failed
+        // and left initialized=false.
+        EmergencyService.initialized = true;
+        // Persist to AsyncStorage so that the next app session's initialize()
+        // finds the contacts in local storage and never needs to call
+        // _syncFromApi().  Without this, every restart clears local storage and
+        // _syncFromApi() must succeed before voice commands can share location.
+        await EmergencyService.saveContacts();
+        // Spread into a new array so React always sees a new reference and
+        // re-renders FlatList correctly (same-reference bail-out is avoided).
+        setEmergencyContacts([...normalized]);
         return;
       }
     } catch (error) {
       console.error('Failed to load emergency contacts from API:', error);
     }
-    
+
     const contacts = EmergencyService.getEmergencyContacts();
-    setEmergencyContacts(contacts);
+    // Spread to new array — prevents React bailing out when the service mutates
+    // its internal array in-place (push/filter) before setState is called.
+    setEmergencyContacts([...contacts]);
   };
   const handleSelectFromContacts = async () => {
     if (!hasContactsPermission) {
@@ -108,7 +136,8 @@ const EmergencyContactsScreen = ({ navigation }) => {
       console.error('Failed to sync contact to server:', error);
     }
     
-    EmergencyService.addEmergencyContact(newContact);
+    // await so the contact is fully persisted before we reload the list
+    await EmergencyService.addEmergencyContact(newContact);
     await loadEmergencyContacts();
     setContactName('');
     setContactPhone('');
@@ -193,7 +222,9 @@ const EmergencyContactsScreen = ({ navigation }) => {
           <FlatList
             data={emergencyContacts}
             renderItem={renderContact}
-            keyExtractor={item => item.id}
+            keyExtractor={(item, index) =>
+              item.id != null ? String(item.id) : `contact-${index}`
+            }
             scrollEnabled={false}
             style={styles.contactsList}
           />

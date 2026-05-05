@@ -12,9 +12,10 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "SENSEI needs camera access for AR navigation and object detection.",
-        "NSMicrophoneUsageDescription": "SENSEI needs microphone access for voice commands.",
+        "NSMicrophoneUsageDescription": "Allow SENSEI to access the microphone for always-on voice commands.",
         "NSLocationWhenInUseUsageDescription": "SENSEI needs location access for navigation.",
-        "NSBluetoothAlwaysUsageDescription": "SENSEI needs Bluetooth access for wearable device integration."
+        "NSBluetoothAlwaysUsageDescription": "SENSEI needs Bluetooth access for wearable device integration.",
+        "NSSpeechRecognitionUsageDescription": "Allow SENSEI to use speech recognition so you can control the app hands-free."
       },
       "bundleIdentifier": "com.anonymous.senseiapp"
     },
@@ -31,7 +32,12 @@
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
       ],
-      "package": "com.anonymous.senseiapp"
+      "package": "com.anonymous.senseiapp",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCfa49gfZiFnkUke_Bzl-Pj8pbUKNI_lxg"
+        }
+      }
     },
     "plugins": [
       [
@@ -43,7 +49,20 @@
       [
         "react-native-vision-camera",
         {}
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow SENSEI to access the microphone for always-on voice commands.",
+          "speechRecognitionPermission": "Allow SENSEI to use speech recognition so you can control the app hands-free."
+        }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "47f5f20b-fb0e-479d-9b7e-9fe921e392ef"
+      }
+    },
+    "owner": "jaisha_ss1"
   }
 }

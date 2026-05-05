@@ -1,4 +1,7 @@
 import express from 'express';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { requireAuth } from '../middleware/auth.js';
 import { 
   OCRSession, 
@@ -7,8 +10,63 @@ import {
   VoiceCommand,
   SystemLog 
 } from '../models/index.js';
+import Tesseract from 'tesseract.js';
 
 const router = express.Router();
+
+// Cache Tesseract language data on disk so it is only downloaded once.
+// Without cachePath, Tesseract re-downloads eng.traineddata.gz (~10 MB) from
+// its CDN every time the server restarts, which can take 20–60 s on a slow
+// connection and causes the client OCR request to time out.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
+const TESSERACT_CACHE_DIR = path.resolve(__dirname, '..', '..', '.tesseract-cache');
+try { fs.mkdirSync(TESSERACT_CACHE_DIR, { recursive: true }); } catch {}
+
+// Reusable Tesseract worker — created once and kept alive so every OCR request
+// doesn't pay the full worker-init overhead (~500 ms).
+let _tesseractWorker = null;
+let _workerInitializing = false;
+let _workerInitQueue = [];
+
+async function getTesseractWorker() {
+  if (_tesseractWorker) return _tesseractWorker;
+
+  // If another request is already initializing, queue behind it.
+  if (_workerInitializing) {
+    return new Promise((resolve, reject) => {
+      _workerInitQueue.push({ resolve, reject });
+    });
+  }
+
+  _workerInitializing = true;
+  try {
+    const worker = await Tesseract.createWorker('eng', 1, {
+      logger: () => {},   // suppress progress noise
+      errorHandler: (err) => console.error('Tesseract worker error:', err),
+      // cachePath: language data is saved here after first download so
+      // subsequent server restarts load from disk (~0.5 s) instead of
+      // re-downloading from the CDN (~10–60 s).
+      cachePath: TESSERACT_CACHE_DIR,
+    });
+    // Optimise for signs / labels: assume single block of text
+    await worker.setParameters({
+      tessedit_pageseg_mode: '6',   // PSM_SINGLE_BLOCK — good for signs
+    });
+    _tesseractWorker = worker;
+    // Drain the queue
+    for (const cb of _workerInitQueue) cb.resolve(worker);
+    _workerInitQueue = [];
+    return worker;
+  } catch (err) {
+    for (const cb of _workerInitQueue) cb.reject(err);
+    _workerInitQueue = [];
+    _tesseractWorker = null;
+    throw err;
+  } finally {
+    _workerInitializing = false;
+  }
+}
 
 router.post('/ocr', async (req, res) => {
   try {
@@ -17,42 +75,41 @@ router.post('/ocr', async (req, res) => {
     if (!image) {
       return res.status(400).json({ error: 'Image data is required' });
     }
-    
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    const mockTexts = [
-      'STOP',
-      'EXIT',
-      'ENTRANCE',
-      'PARKING',
-      'NO ENTRY',
-      'CAUTION',
-      'SPEED LIMIT 30',
-      'OPEN 9AM-5PM',
-      'PUSH',
-      'PULL',
-      'RESTROOM',
-      'ELEVATOR',
-      ''
-    ];
-    
-    const randomText = mockTexts[Math.floor(Math.random() * mockTexts.length)];
-    const confidence = randomText ? (0.7 + Math.random() * 0.25) : 0;
-    
+
+    // Decode the base64 image into a Buffer for Tesseract.
+    // Do NOT truncate the base64 string — that produces a broken JPEG.
+    const imageBuffer = Buffer.from(image, 'base64');
+
+    // Run real OCR with Tesseract.js
+    let ocrText = '';
+    let ocrConfidence = 0;
+    try {
+      const worker = await getTesseractWorker();
+      const { data } = await worker.recognize(imageBuffer);
+      // data.text is the raw recognised text; clean it up
+      ocrText = (data.text || '').replace(/\s+/g, ' ').trim();
+      // data.confidence is 0-100; normalise to 0-1
+      ocrConfidence = parseFloat(((data.confidence || 0) / 100).toFixed(2));
+    } catch (tessErr) {
+      console.error('OCR: Tesseract recognition failed:', tessErr.message || tessErr);
+      // Return empty but valid response so the client doesn't crash
+      return res.json({ text: '', confidence: 0, length: 0, language: 'en', regions: [] });
+    }
+
     const result = {
-      text: randomText,
-      confidence: parseFloat(confidence.toFixed(2)),
-      length: randomText.length,
+      text: ocrText,
+      confidence: ocrConfidence,
+      length: ocrText.length,
       language: 'en',
-      regions: randomText ? [
+      regions: ocrText ? [
         {
-          text: randomText,
-          boundingBox: { x: 0.3, y: 0.4, width: 0.4, height: 0.2 },
-          confidence: confidence
+          text: ocrText,
+          boundingBox: { x: 0.1, y: 0.1, width: 0.8, height: 0.8 },
+          confidence: ocrConfidence,
         }
-      ] : []
+      ] : [],
     };
-    
+
     if (save && req.user && req.user.id) {
       try {
         const session = await OCRSession.create({
@@ -60,7 +117,7 @@ router.post('/ocr', async (req, res) => {
           detected_text: result.text,
           confidence: result.confidence,
           language: result.language,
-          image_path: image.substring(0, 100)
+          image_path: image.substring(0, 100),
         });
         result.session_id = session._id;
       } catch (dbError) {
@@ -75,7 +132,7 @@ router.post('/ocr', async (req, res) => {
       error: 'OCR processing failed',
       text: '',
       confidence: 0,
-      length: 0
+      length: 0,
     });
   }
 });
@@ -353,3 +410,10 @@ router.post('/depth', async (req, res) => {
 });
 
 export default router;
+
+// Pre-warm the Tesseract worker at module load so the first client OCR request
+// doesn't have to wait for the full cold-start (worker init + eng.traineddata
+// download from CDN can take 20-30 s on first use).
+getTesseractWorker()
+  .then(() => console.log('Tesseract worker ready'))
+  .catch(err => console.warn('Tesseract pre-warm failed (will retry on first request):', err?.message || err));

@@ -8,12 +8,14 @@ const Card = ({
   onPress, 
   icon = null,
   variant = 'default',
+  style,
   children,
   gradient = false 
 }) => {
   const cardStyles = [
     styles.card,
     styles[variant],
+    style,
   ];
   const CardContent = (
     <View style={styles.container}>
@@ -99,6 +101,13 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: COLORS.primary,
     backgroundColor: COLORS.cardBackgroundLight,
+  },
+  outlined: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   container: {
     flexDirection: 'row',

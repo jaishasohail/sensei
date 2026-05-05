@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const STORAGE_KEY = '@sensei_settings_v1';
 const DEFAULTS = {
   precisionMode: true,
-  refinementPass: false,
+  refinementPass: true,
   horizontalFOV: 70,
   verticalFOV: 60,
   maxDetections: 15,
