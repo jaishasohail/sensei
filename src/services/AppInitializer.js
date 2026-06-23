@@ -30,25 +30,28 @@ class AppInitializer {
   async initializeServices() {
     try {
       OfflineModeService.setApiBaseUrl(API_BASE_URL);
-      await OCRService.initialize({ apiBaseUrl: API_BASE_URL });
-      await EmotionDetectionService.initialize({ apiBaseUrl: API_BASE_URL });
-      await DepthEstimationService.initialize({ apiBaseUrl: API_BASE_URL });
-      const serverOnline = await OfflineModeService.pingServer();
-      if (serverOnline) {
-        OfflineModeService.setUseCloud(true);
-        TextToSpeechService.speak('Connected to SENSEI server');
-      } else {
-        OfflineModeService.setUseCloud(false);
-        TextToSpeechService.speak('Running in offline mode');
-      }
-      await LocationService.requestPermissions();
-      await ObjectDetectionService.requestPermissions();
-      // Preload object detection model in background to reduce latency when opening AR
-      ObjectDetectionService.loadModel().then(() => {
+      // Ping server early so ObjectDetectionService knows whether LAN model URLs are reachable.
+      const serverOnlinePromise = OfflineModeService.pingServer().then((online) => {
+        OfflineModeService.setUseCloud(online);
+        return online;
+      });
+      const modelPreload = ObjectDetectionService.loadModel().then(() => {
         console.log('AppInitializer: ObjectDetection model preloaded');
       }).catch(err => {
         console.warn('AppInitializer: preload model failed', err);
       });
+
+      await OCRService.initialize({ apiBaseUrl: API_BASE_URL });
+      await EmotionDetectionService.initialize({ apiBaseUrl: API_BASE_URL });
+      await DepthEstimationService.initialize({ apiBaseUrl: API_BASE_URL });
+      const serverOnline = await serverOnlinePromise;
+      if (serverOnline) {
+        TextToSpeechService.speak('Connected to SENSEI server');
+      } else {
+        TextToSpeechService.speak('Running in offline mode');
+      }
+      await LocationService.requestPermissions();
+      await modelPreload;
       await SpatialAudioService.initialize();
       await BluetoothService.initialize();
       TextToSpeechService.speak('SENSEI initialized');

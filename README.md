@@ -256,4 +256,3 @@ Current Version: 1.0.0
 
 ---
 
-Built with ❤️ for enhanced independence and accessibility

@@ -22,3 +22,11 @@ allprojects {
 
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
+
+// ── SDK 35 override ──────────────────────────────────────────────────────────
+// android-36 + JDK 21 breaks JdkImageTransform (--patch-module=java.base error).
+// Android SDK 35 (Android 15, stable) is fully compatible with JDK 17 & 21.
+// These assignments run AFTER expo-root-project sets them, so they win.
+rootProject.ext.compileSdkVersion = 35
+rootProject.ext.targetSdkVersion  = 35
+rootProject.ext.buildToolsVersion = "35.0.0"

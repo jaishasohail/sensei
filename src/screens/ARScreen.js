@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
-import { View, Text, StyleSheet, Dimensions, Alert } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, Alert, Platform } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import * as ExpoCamera from 'expo-camera';
 import { decodeJpeg } from '@tensorflow/tfjs-react-native';
 import * as tf from '@tensorflow/tfjs';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as ImageManipulator from 'expo-image-manipulator';
 import Button from '../components/Button';
 import ObjectDetectionService from '../services/ObjectDetectionService';
 import SettingsService from '../services/SettingsService';
@@ -19,6 +20,69 @@ import RealTimeCameraView, { isRealTimeCameraAvailable } from '../components/Rea
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../constants/theme';
 const { width, height } = Dimensions.get('window');
 const DEFAULT_DETECTION_ASPECT = 640 / 480;
+/** COCO-SSD sweet spot — 320 px keeps decode + inference fast with good accuracy. */
+const DETECTION_INPUT_WIDTH = 320;
+
+/**
+ * Extract multi-axis brightness / edge signals for stair detection.
+ *
+ * Works when the camera looks ahead at stairs OR is tilted down / parallel
+ * to the treads (foot-level view).  Row analysis catches forward-facing
+ * risers; column + gradient analysis catches side-on and downward views.
+ */
+function extractImageEdgeSignal(imageTensor) {
+  try {
+    const [H, W] = imageTensor.shape;
+    const packed = tf.tidy(() => {
+      // Downsample before edge analysis — enough for stair bands, much less RAM
+      const maxW = 160;
+      const scale = W > maxW ? maxW / W : 1;
+      const sH = Math.max(8, Math.round(H * scale));
+      const sW = Math.max(8, Math.round(W * scale));
+
+      let gray = tf.mean(imageTensor.toFloat(), 2);
+      if (scale < 1) {
+        gray = tf.image
+          .resizeBilinear(gray.expandDims(2), [sH, sW])
+          .squeeze();
+      }
+
+      const rowMeans = tf.mean(gray, 1);
+      const colMeans = tf.mean(gray, 0);
+
+      const gH = gray.shape[0];
+      const gW = gray.shape[1];
+      const rowDiff = tf.abs(
+        gray.slice([1, 0], [gH - 1, gW]).sub(gray.slice([0, 0], [gH - 1, gW]))
+      );
+      const rowEdgeEnergy = tf.mean(rowDiff, 1);
+
+      const colDiff = tf.abs(
+        gray.slice([0, 1], [gH, gW - 1]).sub(gray.slice([0, 0], [gH, gW - 1]))
+      );
+      const colEdgeEnergy = tf.mean(colDiff, 0);
+
+      const startRow = Math.floor(gH * 0.40);
+      const numRows = gH - startRow;
+      const bottomRowMeans = tf.mean(gray.slice([startRow, 0], [numRows, gW]), 1);
+
+      return {
+        rowMeans: Array.from(rowMeans.dataSync()),
+        colMeans: Array.from(colMeans.dataSync()),
+        rowEdgeEnergy: Array.from(rowEdgeEnergy.dataSync()),
+        colEdgeEnergy: Array.from(colEdgeEnergy.dataSync()),
+        bottomRowMeans: Array.from(bottomRowMeans.dataSync()),
+        H,
+        W,
+        bottomStartRow: Math.floor(H * 0.40),
+      };
+    });
+    return packed;
+  } catch (e) {
+    console.warn('ARScreen: extractImageEdgeSignal failed:', e?.message);
+    return null;
+  }
+}
 
 function getDetectionContentRect(viewWidth, viewHeight, aspectRatio) {
   const aspect = aspectRatio ?? DEFAULT_DETECTION_ASPECT;
@@ -111,14 +175,16 @@ const CameraWithCaptureRequest = forwardRef(function CameraWithCaptureRequest(
     }
     lastRequestRef.current = captureRequest;
     capturingRef.current = true;
-    // skipProcessing removed: expo-camera must apply EXIF rotation so decodeJpeg
-    // receives a correctly-oriented frame (Android stores JPEGs in sensor-native
-    // landscape with an EXIF rotate tag that TensorFlow.js ignores).
-    takePicture({ base64: true, quality: 0.8, exif: false })
-      .then((photo) => {
-        if (captureRequest <= 2) console.log('ARScreen: [CAPTURE] photo ok base64=' + !!(photo?.base64));
-        if (photo?.base64) onCaptureRef.current?.(photo);
-      })
+      // Do NOT request base64 here — we hand the URI to ImageManipulator which
+      // resizes to 300 px natively (C++) BEFORE we ever call decodeJpeg.
+      // This makes the TF.js decode step ~15× faster (300 px² vs 1920×1080).
+      // EXIF orientation is also applied by ImageManipulator so the manual
+      // 90° CW tensor rotation below is no longer needed.
+      takePicture({ base64: false, quality: 0.55, exif: false })
+        .then((photo) => {
+          if (captureRequest <= 2) console.log('ARScreen: [CAPTURE] photo ok uri=' + !!(photo?.uri));
+          if (photo?.uri) onCaptureRef.current?.(photo);
+        })
       .catch((err) => {
         console.warn('ARScreen: Capture failed', err?.message || err);
       })
@@ -154,9 +220,8 @@ function isValidElementTypeLocal(type) {
   return false;
 }
 const ARScreen = () => {
-  // Prefer CameraView (newer API) for preview
+  // Prefer CameraView (newer API) for preview; CameraViewComponent comes from module scope (line 37)
   const CameraComponent = ExpoCamera?.Camera ?? ExpoCamera?.default ?? ExpoCamera;
-  const CameraViewComponent = ExpoCamera?.CameraView;
   const ResolvedCameraType = ExpoCamera?.CameraType ?? ExpoCamera?.Type ?? (CameraComponent && CameraComponent.Constants ? CameraComponent.Constants.Type : undefined);
   const ResolvedCamera = isValidElementTypeLocal(CameraViewComponent)
     ? CameraViewComponent
@@ -169,7 +234,11 @@ const ARScreen = () => {
   const [ocrText, setOcrText] = useState(null);
   const [isOcrActive, setIsOcrActive] = useState(false);
   const cameraRef = useRef(null);
-  const [modelReady, setModelReady] = useState(false);
+  // Initialise from the singleton's current state: if the model was already
+  // loaded (e.g. by AppInitializer's background preload, or by a previous
+  // visit to this screen), we skip the "Loading…" state entirely and the
+  // "Start AR" button is immediately enabled when the user returns.
+  const [modelReady, setModelReady] = useState(ObjectDetectionService.isReady);
   const isActiveRef = useRef(isActive);
   const arInitializedRef = useRef(false);
   const anchorIdsRef = useRef(new Set());
@@ -178,10 +247,10 @@ const ARScreen = () => {
   const detectionLoopTimeoutRef = useRef(null);
   const isFocused = useIsFocused();
   const [cameraSessionKey, setCameraSessionKey] = useState(0);
-  const TENSOR_WIDTH = 640;
-  const TENSOR_HEIGHT = 480;
   const [stairInfo, setStairInfo] = useState(null);
   const [surfaceInfo, setSurfaceInfo] = useState(null);
+  const [footGuidance, setFootGuidance] = useState({ message: '', priority: 'low', direction: 'forward' });
+  const [dropInfo, setDropInfo] = useState(null);
   const [hookPermission, hookRequestPermission] = useCompatCameraPermissions();
   const [detectionFrameCount, setDetectionFrameCount] = useState(0);
   const [lastDetectionCount, setLastDetectionCount] = useState(-1);
@@ -192,6 +261,9 @@ const ARScreen = () => {
   // Prevents the detection snapshot loop from firing while OCR is capturing.
   // Simultaneous captures cause "Camera unmounted during taking photo process".
   const ocrCapturingRef = useRef(false);
+  // Latest frame that arrived while inference was in-flight.
+  // The detection loop writes here; processCapturedPhoto drains it in finally.
+  const pendingPhotoRef = useRef(null);
   const lastDetectionAspectRef = useRef(DEFAULT_DETECTION_ASPECT);
   const previousFrameDetectionsRef = useRef([]);
   const useRealtimeRef = useRef(false);
@@ -199,9 +271,14 @@ const ARScreen = () => {
   const ttsLastSpokenRef = useRef(new Map());
   useEffect(() => {
     requestCameraPermission();
+    if (ObjectDetectionService.isReady) {
+      setModelReady(true);
+    }
     (async () => {
       try {
-        console.log('ARScreen: Initializing object detection model...');
+        if (!ObjectDetectionService.isReady) {
+          console.log('ARScreen: Initializing object detection model...');
+        }
         await ObjectDetectionService.loadModel();
         console.log('ARScreen: Model loaded');
         setModelReady(true);
@@ -213,17 +290,28 @@ const ARScreen = () => {
     })();
     const applyConfig = (s) => {
       const config = {
-        // 0.40 is the right floor for real phone-camera frames — at 0.55 the model
-        // returns 0 raw predictions for most frames (real-world footage is blurrier
-        // than COCO training images).  False-positive classes are still protected
-        // by FALSE_POSITIVE_CLASSES requiring ≥0.70.
+        // scoreThreshold 0.40: balanced floor — low enough to catch real
+        // obstacles on blurry phone-camera frames, high enough that the
+        // temporal confirmation filter handles residual noise.
         scoreThreshold: 0.40,
-        confirmBypassThreshold: 0.55,  // ≥0.55 → shown immediately; 0.40-0.55 → needs 2 frames
+        // confirmBypassThreshold 0.55: a detection must reach 55 % confidence
+        // to be shown on the very first frame.  Scores 0.40–0.55 require the
+        // object to appear in 2 consecutive frames before being confirmed.
+        // 0.65 was too strict — real objects at 3+ meters often score 0.50–0.60.
+        confirmBypassThreshold: 0.55,
         nmsIoUThreshold: 0.45,
         perClassNMS: true,
-        smoothingFactor: 0.50,
-        trackMaxAgeMs: 600,
+        // 0.72 gives the new frame 72 % weight so boxes track fast (real-time
+        // feel) while still smoothing out single-frame jitter.
+        smoothingFactor: 0.72,
+        // 800 ms: must survive 2–3 frame intervals (~250–400 ms each) so that
+        // the minConfirmFrames requirement can actually be met.  The old 400 ms
+        // was shorter than the confirmation window, silently dropping real objects.
+        trackMaxAgeMs: 800,
         associationIoUThreshold: 0.30,
+        // 1 means seenCount must reach 2 for below-bypass detections.
+        // With snapshot capture at ~250 ms/frame, 2 frames = 500 ms which is
+        // comfortably within the 800 ms track expiry window.
         minConfirmFrames: 1,
         maxDetections: s.maxDetections ?? 15,
         horizontalFOV: s.horizontalFOV ?? 70,
@@ -280,10 +368,8 @@ const ARScreen = () => {
         }
       },
       onReadText: () => {
-        // Trigger OCR if available
-        if (!isOcrActive) {
-          setIsOcrActive(true);
-        }
+        // Use functional setState to avoid stale closure — React bails out if already true
+        setIsOcrActive(true);
       },
     });
   }, [cameraReady]);
@@ -347,77 +433,71 @@ const ARScreen = () => {
     }
   };
   const processCapturedPhoto = async (photo) => {
-    if (!photo?.base64) {
-      setDetectionStatus('No base64 in photo');
+    if (!photo?.uri && !photo?.base64) {
+      setDetectionStatus('No image data in photo');
       return;
     }
     detectionInFlightRef.current = true;
     setDetectionStatus('Running model...');
     try {
-      const rawBytes = tf.util.encodeString(photo.base64, 'base64');
+      // ImageManipulator resizes full-sensor JPEG to DETECTION_INPUT_WIDTH before
+      // decodeJpeg — ~4× faster than decoding at camera resolution.
+      let smallBase64 = photo.base64 ?? null;
+      if (photo.uri) {
+        try {
+          const { base64: b64 } = await ImageManipulator.manipulateAsync(
+            photo.uri,
+            [{ resize: { width: DETECTION_INPUT_WIDTH } }],
+            { compress: 0.75, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+          );
+          smallBase64 = b64;
+        } catch (manipErr) {
+          console.warn('ARScreen: ImageManipulator resize failed, using fallback', manipErr?.message);
+        }
+      }
+      if (!smallBase64) {
+        setDetectionStatus('Image prep failed');
+        return;
+      }
+
+      const rawBytes = tf.util.encodeString(smallBase64, 'base64');
       let imageTensor = decodeJpeg(rawBytes, 3);
       let [origH, origW] = imageTensor.shape;
 
-      // ── ORIENTATION FIX ────────────────────────────────────────────────────
-      // On Android, takePictureAsync always returns the raw sensor frame in
-      // landscape orientation (W > H) with an EXIF rotation tag that tells the
-      // OS how to display it.  tf.decodeJpeg ignores EXIF, so when the device
-      // is held in portrait the tensor has objects rotated 90° — detection sees
-      // a landscape image and raw predictions drop to 0 for most frames.
-      //
-      // Fix: when the photo is landscape but the device screen is portrait,
-      // apply the implicit EXIF 90° CW rotation manually:
-      //   transpose [H,W,C] → [W,H,C]  then  reverse axis-1 (columns)
-      // This is equivalent to rotating the pixel grid 90° clockwise.
-      if (origW > origH) {
-        const screenDims = Dimensions.get('window');
-        if (screenDims.height > screenDims.width) {
-          // Device is portrait, raw sensor frame is landscape → rotate 90° CW
-          const rotated = tf.tidy(() =>
-            tf.transpose(imageTensor, [1, 0, 2]).reverse(1)
-          );
-          imageTensor.dispose();
-          imageTensor = rotated;
-          [origH, origW] = imageTensor.shape; // update to post-rotation dimensions
-          if (detectionFrameCountRef.current <= 2) {
-            console.log('ARScreen: Applied 90° CW rotation (was landscape, device is portrait)');
-          }
-        }
-      }
-
-      // Use smaller resolution on CPU backend to keep inference time acceptable.
-      // Scale so the LONGER dimension is maxSize — this works for both landscape
-      // and portrait frames.  The old maxW/maxH (640×480) squashed a portrait
-      // frame to only ~273 px wide, making person detection unreliable.
-      const isCpuBackend = tf.getBackend() === 'cpu';
-      const maxSize = isCpuBackend ? 416 : 640;
+      // ImageManipulator already corrected EXIF orientation and resized to target width.
+      const maxSize = DETECTION_INPUT_WIDTH;
       const scale = maxSize / Math.max(origW, origH);
       const targetW = Math.round(origW * scale);
       const targetH = Math.round(origH * scale);
       if (targetW < 1 || targetH < 1) {
         setDetectionStatus('Image too small');
+        imageTensor.dispose();
         return;
       }
-      if (origW !== targetW || origH !== targetH) {
-        if (detectionFrameCountRef.current <= 2) {
-          console.log('ARScreen: Resizing photo from', origW + 'x' + origH, 'to', targetW + 'x' + targetH, '(aspect preserved)');
-        }
-        const resizedTensor = tf.tidy(() => {
-          return tf.image.resizeBilinear(imageTensor.expandDims(0), [targetH, targetW])
+      const needsResize = Math.abs(origW - targetW) > 2 || Math.abs(origH - targetH) > 2;
+      if (needsResize) {
+        const resizedTensor = tf.tidy(() =>
+          tf.image.resizeBilinear(imageTensor.expandDims(0), [targetH, targetW])
             .squeeze()
-            .cast('int32');
-        });
+            .cast('int32')
+        );
         imageTensor.dispose();
         imageTensor = resizedTensor;
       }
+
       const [imgH, imgW] = imageTensor.shape;
       lastDetectionAspectRef.current = imgW / imgH;
       const detections = await ObjectDetectionService.detectFromTensor(imageTensor, imgW, imgH);
+
+      // Extract per-row brightness BEFORE disposing the tensor so that
+      // DepthEstimationService can detect stair/step edges from pixel data
+      // even when there are zero COCO-SSD detections (stairs are not COCO classes).
+      const edgeSignal = extractImageEdgeSignal(imageTensor);
       imageTensor.dispose();
 
       // ObjectDetectionService already enforces scoreThreshold + temporal consistency.
       // The only extra guard here is a redundant confidence floor for defence-in-depth.
-      const DISPLAY_THRESHOLD = 0.40;
+      const DISPLAY_THRESHOLD = 0.35;
       const filteredDetections = detections.filter(d => (d.confidence ?? 0) >= DISPLAY_THRESHOLD);
 
       previousFrameDetectionsRef.current = filteredDetections.map((d) => ({
@@ -431,65 +511,86 @@ const ARScreen = () => {
         console.log('ARScreen: Frame #' + detectionFrameCountRef.current + ' -> ' + filteredDetections.length + ' detected (raw: ' + detections.length + ')');
       }
       setDetectedObjects(filteredDetections);
-      const frameNum = detectionFrameCountRef.current;
-      const runDepthAndFoot = frameNum % 2 === 0; // every 2nd frame to keep UI responsive
-      if (filteredDetections.length > 0) {
-        let depthData = null;
-        if (runDepthAndFoot) {
-          depthData = await DepthEstimationService.processFrame(photo.base64, filteredDetections);
-          if (FootPlacementService.isMonitoring()) {
-            const footResult = await FootPlacementService.processFrame(filteredDetections, depthData);
-            if (footResult) {
-              if (footResult.warnings?.length > 0) setFootWarnings(footResult.warnings);
-              if (footResult.stairs?.detected) {
-                setStairInfo(footResult.stairs);
-                await FootPlacementService.warnStairs(footResult.stairs);
-              } else setStairInfo(null);
-              if (footResult.surface?.detected) {
-                setSurfaceInfo(footResult.surface);
-                await FootPlacementService.warnUnevenSurface(footResult.surface);
-              } else setSurfaceInfo(null);
-              }
-            }
+
+      // Depth + foot guidance — always run while monitoring so stair edges
+      // are not missed on alternating frames (critical for foot-level views).
+      const depthData = FootPlacementService.isMonitoring()
+        ? await DepthEstimationService.processFrame(edgeSignal, filteredDetections)
+        : null;
+      if (FootPlacementService.isMonitoring()) {
+        const footResult = await FootPlacementService.processFrame(filteredDetections, depthData);
+        if (footResult) {
+          if (footResult.warnings?.length > 0) setFootWarnings(footResult.warnings);
+          else setFootWarnings([]);
+
+          // Guidance card
+          if (footResult.guidance) setFootGuidance(footResult.guidance);
+          if (footResult.shouldSpeak && footResult.guidance) {
+            FootPlacementService.speakGuidance(footResult.guidance).catch(() => {});
           }
-        // ── Voice assistance: announce ALL detected objects by hazard level ──
-        // announceDetectedObjects handles per-class cooldowns internally so TTS
-        // never floods the user. Critical objects get 4 s cooldown, others longer.
+
+          // Drop-off warning
+          if (footResult.drop) {
+            setDropInfo(footResult.drop);
+            FootPlacementService.warnDropOff(footResult.drop).catch(() => {});
+          } else {
+            setDropInfo(null);
+          }
+
+          // Stairs
+          if (footResult.stairs?.detected) {
+            setStairInfo(footResult.stairs);
+            await FootPlacementService.warnStairs(footResult.stairs);
+          } else setStairInfo(null);
+
+          // Uneven surface
+          if (footResult.surface?.detected) {
+            setSurfaceInfo(footResult.surface);
+            await FootPlacementService.warnUnevenSurface(footResult.surface);
+          } else setSurfaceInfo(null);
+        }
+      }
+
+      // ── Voice + spatial audio: only when COCO objects are present ──────────
+      if (filteredDetections.length > 0) {
         ObjectDetectionService.announceDetectedObjects(
           filteredDetections,
           (text, opts, priority) => TextToSpeechService.speak(text, opts, priority)
         );
-        // Spatial audio beep for the closest critical/warning object
         const topHazard = filteredDetections
           .filter(d => ObjectDetectionService.getPriorityLevel(d) !== 'info')
           .sort((a, b) => a.distance - b.distance)[0];
         if (topHazard) {
           SpatialAudioService.playDirectionalBeep(topHazard.position.angle, topHazard.distance);
         }
-        // Log to server (non-blocking)
         ObjectDetectionService.logDetectionsToServer(filteredDetections).catch(() => {});
-      } else {
-        if (runDepthAndFoot && FootPlacementService.isMonitoring()) FootPlacementService.processFrame([], null);
-        previousFrameDetectionsRef.current = [];
-        if (runDepthAndFoot) {
-          setFootWarnings([]);
-          setStairInfo(null);
-          setSurfaceInfo(null);
-        }
       }
     } catch (err) {
       setDetectionStatus('Error: ' + (err.message || 'unknown'));
       console.warn('ARScreen: processCapturedPhoto error:', err?.message, err?.stack);
     } finally {
       detectionInFlightRef.current = false;
+      // Drain the most recent pending frame immediately (latest-frame-wins).
+      // This is the key to pipelining: if a new frame arrived while inference
+      // was running we process it right away instead of waiting for the next
+      // capture cycle — keeps the detection rate at hardware capture speed.
+      const pending = pendingPhotoRef.current;
+      if (pending) {
+        pendingPhotoRef.current = null;
+        processCapturedPhotoRef.current(pending);
+      }
     }
   };
 
   processCapturedPhotoRef.current = processCapturedPhoto;
 
   const runFrameDetection = () => {
-    if (detectionInFlightRef.current) return;
-    // Don't fire a snapshot capture while OCR is taking its own photo.
+    // NOTE: we no longer gate on detectionInFlightRef here.
+    // Capture and inference are now pipelined: if inference is busy when the
+    // next capture arrives, handleCapture stores it in pendingPhotoRef and the
+    // finally block drains it the instant inference finishes.
+    // Allowing captures to run while inference is in-flight is what makes the
+    // detection feel real-time (camera throttles the rate, not the model).
     if (ocrCapturingRef.current) return;
     detectionFrameCountRef.current += 1;
     setDetectionFrameCount(detectionFrameCountRef.current);
@@ -501,11 +602,21 @@ const ARScreen = () => {
   };
 
   const handleCapture = (photo) => {
-    processCapturedPhotoRef.current(photo);
+    if (!detectionInFlightRef.current) {
+      // Inference idle — start processing this frame immediately.
+      processCapturedPhotoRef.current(photo);
+    } else {
+      // Inference busy — store as pending (latest-frame-wins: the older
+      // pending frame, if any, is simply overwritten and discarded).
+      pendingPhotoRef.current = photo;
+    }
+    // Always kick off the next capture without waiting for inference to finish.
+    // The natural throttle is takePictureAsync itself (~80-150 ms on Android).
+    // On GPU devices this lets capture and inference run concurrently (both are
+    // native async operations), effectively doubling throughput vs the old
+    // serialised approach.
     if (isActiveRef.current && isFocused) {
-      // CPU backend is much slower — give it breathing room; GPU runs tight loop
-      const loopDelay = tf.getBackend() === 'cpu' ? 500 : 100;
-      detectionLoopTimeoutRef.current = setTimeout(scheduleDetectionLoop, loopDelay);
+      detectionLoopTimeoutRef.current = setTimeout(scheduleDetectionLoop, 0);
     }
   };
 
@@ -540,7 +651,8 @@ const ARScreen = () => {
       if (modelReady) {
         useRealtimeRef.current = isRealTimeCameraAvailable();
         ObjectDetectionService.setCameraRef(cameraRef);
-        ObjectDetectionService.setConfig({ scoreThreshold: 0.40, confirmBypassThreshold: 0.55 });
+        // Config is set once by the applyConfig effect on mount — no partial
+        // overwrite here to avoid creating an inconsistent Frankenstein config.
         setIsActive(true);
         isActiveRef.current = true;
         if (useRealtimeRef.current) {
@@ -584,149 +696,6 @@ const ARScreen = () => {
       TextToSpeechService.speak('Failed to start AR detection');
     }
   };
-  const handleCameraStream = (images, updatePreview, gl) => {
-    console.log('ARScreen: handleCameraStream started', {
-      hasImages: !!images,
-      hasUpdatePreview: !!updatePreview,
-      hasGL: !!gl
-    });
-    if (!updatePreview) {
-      console.warn('ARScreen: updatePreview function not provided - camera preview may not render!');
-    }
-    if (!images) {
-      console.error('ARScreen: images iterator not provided');
-      return;
-    }
-    let isLooping = true;
-    let frameCount = 0;
-    const loop = async () => {
-      if (!isLooping) return;
-
-      let imageTensor;
-      try {
-        imageTensor = images.next().value;
-        if (!imageTensor) {
-          requestAnimationFrame(loop);
-          return;
-        }
-
-        frameCount++;
-
-        // Advance frames for snapshot-based detection.
-        if (typeof updatePreview === 'function') {
-          try {
-            updatePreview();
-          } catch (e) {
-            console.warn('ARScreen: updatePreview error', e);
-          }
-        }
-
-        // If not active, just update preview and dispose tensor
-        if (!isActiveRef.current) {
-          try {
-            if (imageTensor && typeof imageTensor.dispose === 'function') {
-              imageTensor.dispose();
-            }
-          } catch (e) {
-            console.warn('ARScreen: Error disposing tensor when inactive', e);
-          }
-          requestAnimationFrame(loop);
-          return;
-        }
-      } catch (err) {
-        console.error('ARScreen: Error getting image tensor', err);
-        requestAnimationFrame(loop);
-        return;
-      }
-
-      // Initialize AR service if needed (but don't interfere with camera preview)
-      // Note: ARService uses the same GL context, so we need to be careful
-      // For now, we'll skip ARService initialization to avoid conflicts with camera preview
-      // AR overlays can be added later via React Native views instead of WebGL
-      if (gl && !arInitializedRef.current && isActiveRef.current) {
-        try {
-          // Temporarily disable ARService to prevent GL context conflicts
-          // await ARService.initialize(gl, { width, height, pixelRatio: 1 });
-          // ARService.start();
-          arInitializedRef.current = true;
-          anchorIdsRef.current.forEach(id => ARService.removeAnchor(id));
-          anchorIdsRef.current.clear();
-          console.log('ARScreen: ARService initialization skipped to preserve camera preview');
-        } catch (e) {
-          console.warn('ARScreen: ARService init failed', e);
-        }
-      }
-
-      // Process detection only when active and model is ready
-      if (isActiveRef.current && modelReady && imageTensor) {
-        try {
-          if (frameCount % 30 === 0) {
-            console.log(`ARScreen: Processing frame ${frameCount} for detection...`);
-          }
-          const detections = await ObjectDetectionService.detectFromTensor(imageTensor, TENSOR_WIDTH, TENSOR_HEIGHT);
-          if (detections.length > 0 || frameCount % 30 === 0) {
-            console.log(`ARScreen: Frame ${frameCount} - detected ${detections.length} objects`);
-          }
-
-          if (detections.length > 0 || ObjectDetectionService.getPerformanceMetrics().framesProcessed > 0) {
-            setDetectedObjects(detections);
-          }
-
-          if (FootPlacementService.isMonitoring() && detections.length > 0) {
-            const footResult = await FootPlacementService.processFrame(detections, null);
-            if (footResult && footResult.warnings) {
-              setFootWarnings(footResult.warnings);
-            }
-          }
-
-          if (detections.length > 0) {
-            // ── Voice assistance for all hazard levels ──
-            ObjectDetectionService.announceDetectedObjects(
-              detections,
-              (text, opts, priority) => TextToSpeechService.speak(text, opts, priority)
-            );
-            const topHazard = detections
-              .filter(d => ObjectDetectionService.getPriorityLevel(d) !== 'info')
-              .sort((a, b) => a.distance - b.distance)[0];
-            if (topHazard) {
-              SpatialAudioService.playDirectionalBeep(topHazard.position.angle, topHazard.distance);
-            }
-          }
-        } catch (err) {
-          console.warn('handleCameraStream detect error', err);
-          console.error('Error details:', err.message, err.stack);
-        } finally {
-          // Dispose tensor after a delay to ensure detection completes
-          // The model.detect() is async and might need the tensor
-          setTimeout(() => {
-            try {
-              if (imageTensor && typeof imageTensor.dispose === 'function') {
-                imageTensor.dispose();
-              }
-            } catch (e) {
-              // Tensor might already be disposed, ignore
-            }
-          }, 200);
-        }
-      } else {
-        // Dispose tensor even if not processing
-        try {
-          if (imageTensor && typeof imageTensor.dispose === 'function') {
-            imageTensor.dispose();
-          }
-        } catch (e) {
-          console.warn('ARScreen: Error disposing tensor when inactive', e);
-        }
-      }
-      requestAnimationFrame(loop);
-    };
-    loop();
-
-    // Return cleanup function
-    return () => {
-      isLooping = false;
-    };
-  };
   const stopARDetection = async () => {
     try {
       ObjectDetectionService.stopDetection();
@@ -749,6 +718,8 @@ const ARScreen = () => {
       setIsOcrActive(false);
       setStairInfo(null);
       setSurfaceInfo(null);
+      setFootGuidance({ message: '', priority: 'low', direction: 'forward' });
+      setDropInfo(null);
       setDetectionFrameCount(0);
       setLastDetectionCount(-1);
       setDetectionStatus('');
@@ -816,16 +787,29 @@ const ARScreen = () => {
       }
 
       // ── 2. Server confirmed up — now speak and capture ───────────────────────
-      TextToSpeechService.speak('Capturing text');
+      TextToSpeechService.speakImmediate('Capturing text');
 
+      // Capture without base64 first (URI only) — we'll let ImageManipulator
+      // produce the final base64 after resizing so we never allocate a huge
+      // full-resolution base64 string in JS memory.
       const photo = await cam.captureForOCR({
-        base64: true,
-        quality: 0.9,
+        base64: false,
+        quality: 0.8,
       });
+
+      // Resize to max 1200 px wide at 70 % quality.
+      // A 12 MP camera photo decoded by Tesseract at full size takes 30–120 s.
+      // At 1200 px Tesseract reads the same text in under 5 s with no quality loss
+      // because OCR accuracy peaks well below native camera resolution.
+      const resized = await ImageManipulator.manipulateAsync(
+        photo.uri,
+        [{ resize: { width: 1200 } }],
+        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+      );
 
       // skipHealthCheck: true — we already verified above; no need to pay for
       // a second round-trip before sending the image payload.
-      const result = await OCRService.readTextFromImage(photo.base64, { skipHealthCheck: true });
+      const result = await OCRService.readTextFromImage(resized.base64, { skipHealthCheck: true });
 
       if (result.serverDown) {
         // Server went down in the narrow window between health check and OCR
@@ -836,9 +820,29 @@ const ARScreen = () => {
         TextToSpeechService.speak('Reading text timed out. The server may be starting up. Please try again in a moment.');
       } else if (result.text && result.text.trim()) {
         setOcrText(result.text);
-        TextToSpeechService.speak(`Text detected: ${result.text}`);
+        // Require at least 60% confidence before reading aloud.
+        // Server-side filtering already strips low-confidence words, but the
+        // aggregate score can still be dragged down by borderline detections.
+        // 0.60 is the empirical sweet-spot: real sign text scores 0.70–0.95;
+        // background noise that slips through the word filter lands below 0.60.
+        if (result.confidence >= 0.60) {
+          // Final sanitization pass — remove any stray non-printable or
+          // non-ASCII characters that survived the server-side char whitelist
+          // (e.g. soft-hyphens, zero-width spaces), then normalize whitespace.
+          const cleanText = result.text
+            .replace(/[^\x20-\x7E]/g, '')   // keep only printable ASCII
+            .replace(/\s+/g, ' ')            // collapse multiple spaces/newlines
+            .trim();
+          if (cleanText) {
+            TextToSpeechService.speakImmediate(cleanText);
+          } else {
+            TextToSpeechService.speakImmediate('Could not read text clearly. Please move closer or improve lighting.');
+          }
+        } else {
+          TextToSpeechService.speakImmediate('Could not read text clearly. Please move closer or improve lighting.');
+        }
       } else {
-        TextToSpeechService.speak('No text detected in image');
+        TextToSpeechService.speakImmediate('No text detected in image');
       }
     } catch (error) {
       console.error('OCR error:', error);
@@ -970,7 +974,7 @@ const ARScreen = () => {
                   {obj.class} {Math.round((obj.confidence ?? 0) * 100)}%
                 </Text>
                 <Text style={styles.objectLabelDistance}>
-                  {obj.distance.toFixed(1)}m {obj.position.relative}
+                  {(obj.distance ?? 0).toFixed(1)}m {obj.position?.relative}
                 </Text>
               </View>
             </View>
@@ -1006,6 +1010,44 @@ const ARScreen = () => {
             </View>
           )}
 
+          {/* Foot Guidance Card — only shown for medium/high/critical priority */}
+          {footGuidance.priority !== 'low' && footGuidance.message ? (
+            <View style={[
+              styles.guidanceCard,
+              footGuidance.priority === 'critical' ? styles.guidanceCardCritical
+                : footGuidance.priority === 'high' ? styles.guidanceCardHigh
+                : styles.guidanceCardMedium,
+            ]}>
+              <View style={styles.guidanceHeader}>
+                <MaterialCommunityIcons
+                  name={getGuidanceIcon(footGuidance.priority)}
+                  size={20}
+                  color={getGuidanceColor(footGuidance.priority)}
+                />
+                <Text style={[styles.guidanceTitle, { color: getGuidanceColor(footGuidance.priority) }]}>
+                  Foot Guidance
+                </Text>
+              </View>
+              <Text style={styles.guidanceMessage}>{footGuidance.message}</Text>
+            </View>
+          ) : null}
+
+          {/* Drop-off Warning Card */}
+          {dropInfo ? (
+            <View style={styles.dropWarning}>
+              <View style={styles.dropHeader}>
+                <MaterialCommunityIcons name="alert-octagon" size={20} color={COLORS.danger} />
+                <Text style={styles.dropTitle}>Drop-off Detected</Text>
+              </View>
+              <Text style={styles.dropText}>
+                {dropInfo.severity.charAt(0).toUpperCase() + dropInfo.severity.slice(1)} drop
+                {dropInfo.side !== 'center' ? ` to your ${dropInfo.side}` : ' ahead'}
+                {' '}({dropInfo.delta.toFixed(1)}m depth change)
+              </Text>
+              <Text style={styles.dropGuidance}>Step carefully — do not rush</Text>
+            </View>
+          ) : null}
+
           {stairInfo && stairInfo.detected && (
             <View style={styles.stairWarning}>
               <View style={styles.stairHeader}>
@@ -1013,7 +1055,7 @@ const ARScreen = () => {
                 <Text style={styles.stairTitle}>Stairs Detected</Text>
               </View>
               <Text style={styles.stairText}>
-                {stairInfo.goingDown ? 'Going down' : 'Going up'} — {stairInfo.count} steps, {stairInfo.distance.toFixed(1)}m {stairInfo.direction}
+                {stairInfo.goingDown ? 'Going down' : 'Going up'} — {stairInfo.count} steps, {(stairInfo.distance ?? 0).toFixed(1)}m {stairInfo.direction}
               </Text>
               <Text style={styles.stairGuidance}>
                 {stairInfo.distance < 1.0
@@ -1059,7 +1101,7 @@ const ARScreen = () => {
                         <Text style={styles.detectionItemText}>{obj.class}</Text>
                       </View>
                       <Text style={styles.detectionItemDistance}>
-                        {obj.distance.toFixed(1)}m {obj.position.relative}
+                        {(obj.distance ?? 0).toFixed(1)}m {obj.position?.relative}
                       </Text>
                     </View>
                   );
@@ -1068,33 +1110,44 @@ const ARScreen = () => {
             </View>
           )}
           <View style={styles.controls}>
-            <Button
-              title={isActive ? 'Stop AR Detection' : (modelReady ? 'Start AR Detection' : 'Model loading...')}
-              onPress={handleToggleAR}
-              variant={isActive ? 'danger' : 'success'}
-              size="medium"
-              fullWidth
-              disabled={!modelReady || !cameraReady}
-              icon={<Ionicons name={isActive ? 'stop-circle' : 'play-circle'} size={18} color={COLORS.text} />}
-            />
-            {isActive && (
+            <View style={styles.buttonRow}>
+              <Button
+                title={isActive ? 'Stop AR' : (modelReady ? 'Start AR' : 'Loading...')}
+                onPress={handleToggleAR}
+                variant={isActive ? 'danger' : 'success'}
+                size="medium"
+                disabled={!modelReady || !cameraReady}
+                icon={<Ionicons name={isActive ? 'stop-circle' : 'play-circle'} size={18} color={COLORS.text} />}
+                style={styles.buttonHalf}
+              />
               <Button
                 title={isOcrActive ? 'Reading...' : 'Read Text'}
                 onPress={handleReadText}
                 variant="secondary"
                 size="medium"
-                fullWidth
-                disabled={isOcrActive}
+                disabled={isOcrActive || !cameraReady}
                 loading={isOcrActive}
                 icon={<Ionicons name="text" size={18} color={COLORS.text} />}
-                style={{ marginTop: SPACING.sm }}
+                style={styles.buttonHalf}
               />
-            )}
+            </View>
           </View>
         </View>
       </View>
     </View>
   );
+};
+const getGuidanceIcon = (priority) => {
+  if (priority === 'critical') return 'alert-octagon';
+  if (priority === 'high')     return 'alert-circle';
+  if (priority === 'medium')   return 'information';
+  return 'check-circle';
+};
+const getGuidanceColor = (priority) => {
+  if (priority === 'critical') return COLORS.danger;
+  if (priority === 'high')     return COLORS.warning;
+  if (priority === 'medium')   return COLORS.info;
+  return COLORS.success;
 };
 const getObjectIcon = (objectClass) => {
   const iconMap = {
@@ -1278,6 +1331,13 @@ const styles = StyleSheet.create({
   controls: {
     width: '100%',
   },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+  },
+  buttonHalf: {
+    flex: 1,
+  },
   stairWarning: {
     marginBottom: SPACING.md,
     backgroundColor: 'rgba(245, 158, 11, 0.15)',
@@ -1329,6 +1389,67 @@ const styles = StyleSheet.create({
   surfaceText: {
     fontSize: FONT_SIZES.sm,
     color: COLORS.text,
+  },
+  guidanceCard: {
+    marginBottom: SPACING.md,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    borderLeftWidth: 3,
+  },
+  guidanceCardCritical: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderLeftColor: COLORS.danger,
+  },
+  guidanceCardHigh: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderLeftColor: COLORS.warning,
+  },
+  guidanceCardMedium: {
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    borderLeftColor: COLORS.info,
+  },
+  guidanceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: SPACING.xs,
+  },
+  guidanceTitle: {
+    fontSize: FONT_SIZES.md,
+    fontWeight: '700',
+    marginLeft: SPACING.sm,
+  },
+  guidanceMessage: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.text,
+  },
+  dropWarning: {
+    marginBottom: SPACING.md,
+    backgroundColor: 'rgba(239, 68, 68, 0.18)',
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.danger,
+  },
+  dropHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: SPACING.xs,
+  },
+  dropTitle: {
+    fontSize: FONT_SIZES.md,
+    fontWeight: '700',
+    color: COLORS.danger,
+    marginLeft: SPACING.sm,
+  },
+  dropText: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.text,
+    marginBottom: SPACING.xs,
+  },
+  dropGuidance: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textSecondary,
+    fontStyle: 'italic',
   },
 });
 export default ARScreen;

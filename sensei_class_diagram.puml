@@ -1,0 +1,1076 @@
+@startuml sensei_class_diagram
+
+left to right direction
+
+skinparam dpi 150
+skinparam classAttributeIconSize 0
+skinparam classFontSize 8
+skinparam packageStyle rectangle
+skinparam classHeaderBackgroundColor #E8F4FD
+skinparam classBorderColor #2980B9
+skinparam arrowColor #2C3E50
+skinparam packageBackgroundColor #FDFEFE
+skinparam packageBorderColor #ABB2B9
+skinparam linetype ortho
+skinparam ranksep 20
+skinparam nodesep 10
+
+hide empty members
+
+' ══════════════════════════════════════════════════════════════════════
+'  PACKAGE: Server Models  (Mongoose schemas)
+' ══════════════════════════════════════════════════════════════════════
+package "Server Models" #EBF5FB {
+
+  class User {
+    + email : String
+    + phone_number : String
+    + password_hash : String
+    + last_login_at : Date
+    + is_active : Boolean
+    + account_type : String
+    + created_at : Date
+    + updated_at : Date
+  }
+
+  class UserProfile {
+    + user_id : ObjectId
+    + name : String
+    + age : Number
+    + visual_impairment_type : String
+    + created_at : Date
+    + updated_at : Date
+  }
+
+  class UserPreferences {
+    + user_id : ObjectId
+    + speech_speed : Number
+    + audio_volume : Number
+    + haptic_enabled : Boolean
+    + spatial_audio_enabled : Boolean
+    + voice_language : String
+    + screen_reader_verbosity : String
+    + audio_cues_style : String
+    + created_at : Date
+    + updated_at : Date
+  }
+
+  class WearableDevice {
+    + user_id : ObjectId
+    + device_name : String
+    + device_type : String
+    + bluetooth_address : String
+    + battery_level : Number
+    + is_connected : Boolean
+    + firmware_version : String
+    + last_connected_at : Date
+    + created_at : Date
+  }
+
+  class VoiceCommand {
+    + user_id : ObjectId
+    + raw_text : String
+    + parsed_command : String
+    + command_type : String
+    + parameters_json : Mixed
+    + confidence : Number
+    + success : Boolean
+    + execution_time_ms : Number
+    + created_at : Date
+  }
+
+  class SystemLog {
+    + user_id : ObjectId
+    + log_type : String
+    + log_level : String
+    + message : String
+    + metadata_json : Mixed
+    + created_at : Date
+  }
+
+  class SavedLocation {
+    + user_id : ObjectId
+    + location_name : String
+    + address : String
+    + latitude : Number
+    + longitude : Number
+    + category : String
+    + notes : String
+    + visit_count : Number
+    + last_visited_at : Date
+    + created_at : Date
+  }
+
+  class Route {
+    + user_id : ObjectId
+    + route_name : String
+    + start_lat : Number
+    + start_lng : Number
+    + end_lat : Number
+    + end_lng : Number
+    + total_distance : Number
+    + estimated_time : Number
+    + waypoints_json : Mixed
+    + turns_json : Mixed
+    + is_saved : Boolean
+    + used_count : Number
+    + last_used_at : Date
+    + created_at : Date
+  }
+
+  class OfflineMap {
+    + user_id : ObjectId
+    + region_name : String
+    + min_lat : Number
+    + min_lng : Number
+    + max_lat : Number
+    + max_lng : Number
+    + map_data_path : String
+    + file_size_mb : Number
+    + downloaded_at : Date
+    + last_updated_at : Date
+  }
+
+  class OCRSession {
+    + user_id : ObjectId
+    + detected_text : String
+    + confidence : Number
+    + language : String
+    + translated_text : String
+    + translation_language : String
+    + image_path : String
+    + created_at : Date
+  }
+
+  class NavigationSession {
+    + user_id : ObjectId
+    + route_id : ObjectId
+    + start_lat : Number
+    + start_lng : Number
+    + dest_lat : Number
+    + dest_lng : Number
+    + start_time : Date
+    + end_time : Date
+    + status : String
+    + distance_traveled : Number
+    + duration_minutes : Number
+  }
+
+  class EmergencyContact {
+    + user_id : ObjectId
+    + name : String
+    + phone_number : String
+    + relationship : String
+    + is_primary : Boolean
+    + created_at : Date
+    + updated_at : Date
+  }
+
+  class EmergencyAlert {
+    + user_id : ObjectId
+    + trigger_type : String
+    + latitude : Number
+    + longitude : Number
+    + status : String
+    + message : String
+    + contacts_notified : Number
+    + call_911_made : Boolean
+    + resolved_at : Date
+    + created_at : Date
+  }
+
+  class DetectionSession {
+    + user_id : ObjectId
+    + start_time : Date
+    + end_time : Date
+    + frames_processed : Number
+    + objects_detected_count : Number
+    + critical_hazards_count : Number
+  }
+
+  class DetectedObject {
+    + session_id : ObjectId
+    + object_type : String
+    + confidence : Number
+    + distance : Number
+    + position : String
+    + hazard_level : String
+    + bounding_box_json : Mixed
+    + detected_at : Date
+    + user_lat : Number
+    + user_lng : Number
+  }
+}
+
+' ══════════════════════════════════════════════════════════════════════
+'  PACKAGE: Client Services
+' ══════════════════════════════════════════════════════════════════════
+package "Client Services" #EBF5FB {
+
+  class ApiService {
+    + baseUrl : String
+    + token : String
+    --
+    + initialize() : Promise
+    + setToken(token) : Promise
+    + clearToken() : Promise
+    + getHeaders(includeAuth) : Object
+    + request(endpoint, options) : Promise
+    + register(email, password, name, phone_number) : Promise
+    + login(email, password) : Promise
+    + logout() : Promise
+    + getUserProfile(userId) : Promise
+    + updateUserProfile(profileData) : Promise
+    + getUserPreferences() : Promise
+    + updateUserPreferences(preferences) : Promise
+    + getEmergencyContacts() : Promise
+    + addEmergencyContact(contactData) : Promise
+    + updateEmergencyContact(contactId, contactData) : Promise
+    + deleteEmergencyContact(contactId) : Promise
+    + createEmergencyAlert(alertData) : Promise
+    + getEmergencyAlerts() : Promise
+    + resolveEmergencyAlert(alertId) : Promise
+    + createNavigationSession(userId, sessionData) : Promise
+    + getNavigationSession(sessionId) : Promise
+    + updateNavigationSession(sessionId, sessionData) : Promise
+    + endNavigationSession(sessionId) : Promise
+    + getSavedLocations() : Promise
+    + addSavedLocation(locationData) : Promise
+    + updateSavedLocation(locationId, locationData) : Promise
+    + deleteSavedLocation(locationId) : Promise
+    + createDetectionSession(userId, sessionData) : Promise
+    + getDetectionSessions(userId) : Promise
+    + createOCRSession(userId, sessionData) : Promise
+    + performOCR(imageBase64) : Promise
+    + createSystemLog(userId, logData) : Promise
+    + getSystemLogs(userId, filters) : Promise
+    + getOfflineMaps(userId) : Promise
+    + downloadOfflineMap(userId, mapData) : Promise
+    + deleteOfflineMap(mapId) : Promise
+  }
+
+  class AppInitializer {
+    + isInitialized : Boolean
+    --
+    + initialize() : Promise
+    + initializeServices() : Promise
+    + cleanup() : Promise
+    + getInitializationStatus() : Boolean
+  }
+
+  class ARNavigationService {
+    + anchors : Array
+    --
+    + addAnchor(id, position, instruction) : Object
+    + clearAnchors() : void
+    + raycast(screenX, screenY) : Object
+  }
+
+  class ARService {
+    + isInitialized : Boolean
+    + renderer : Renderer
+    + scene : Scene
+    + camera : PerspectiveCamera
+    + gl : Object
+    + pixelRatio : Number
+    + anchors : Map
+    + running : Boolean
+    --
+    + initialize(gl, width, height, pixelRatio) : Promise
+    + start() : void
+    + stop() : void
+    + setCameraPose(position, quaternion, rotation) : void
+    + addAnchor(id, position, quaternion, color, scale, geometry) : Object
+    + updateAnchor(id, position, quaternion, color) : void
+    + removeAnchor(id) : void
+    + clearAll() : void
+    + raycast(screenX, screenY) : Object
+    + createAnchorFromDetection(detection) : Object
+    + cleanup() : void
+    - _findAnchorByObject(obj) : Object
+    - _hasAnchorObject(obj) : Boolean
+  }
+
+  class BluetoothService {
+    + isScanning : Boolean
+    + connectedDevices : Array
+    --
+    + initialize() : Promise
+    + startScan(onDeviceFound, durationMs) : Promise
+    + startScanning(callback) : Promise
+    + stopScan() : void
+    + stopScanning() : void
+    + connectToDevice(deviceId) : Promise
+    + disconnectFromDevice(deviceId) : Promise
+    + disconnectAll() : Promise
+    + getConnectedDevices() : Array
+    + sendHapticPattern(deviceId, pattern) : void
+  }
+
+  class DepthEstimationService {
+    + initialized : Boolean
+    + apiBaseUrl : String
+    - _isProcessing : Boolean
+    - _lastProcessTime : Number
+    - _minProcessInterval : Number
+    - _performanceMetrics : Object
+    - _lastDepthMap : Object
+    - _depthMapAge : Number
+    - _maxDepthMapAge : Number
+    - _realtimeCallback : Function
+    - _realtimeActive : Boolean
+    - _focalEst : Number
+    - _focalWeight : Number
+    --
+    + initialize(apiBaseUrl) : Promise
+    + startRealtimeDepth(callback, options) : Boolean
+    + stopRealtimeDepth() : void
+    + processFrame(edgeSignal, detections) : Promise
+    + getCachedDepthMap() : Object
+    + isRealtimeActive() : Boolean
+    + getPerformanceMetrics() : Object
+    + setProcessInterval(intervalMs) : void
+    - _groundPlaneDepth(normY) : Number
+    - _groundPlaneGrid() : Array
+    - _calibrateFocalLength(detections) : void
+    - _enrichObjectDepths(detections) : Array
+    - _buildDepthGrid(enrichedDetections) : Array
+    - _analyzeGround(grid) : Object
+    - _estimateObjectDimensions(det) : Object
+    - _analyzeZones(enriched) : Object
+    - _detectStairsFromBrightness(rowMeans, H) : Object
+    - _emptyResult() : Object
+  }
+
+  class EmergencyService {
+    + emergencyContacts : Array
+    + isEmergencyActive : Boolean
+    + fallDetectionEnabled : Boolean
+    + lastAcceleration : Object
+    + fallThreshold : Number
+    + storageKey : String
+    + initialized : Boolean
+    + apiBaseUrl : String
+    {static} LIVE_INTERVAL_MS : Number
+    --
+    + initialize() : Promise
+    + saveContacts() : Promise
+    + triggerEmergency() : Promise
+    + cancelEmergency() : void
+    + sendEmergencyAlerts(message, location) : Promise
+    + callEmergency(number) : Promise
+    + shareLocation(location) : Promise
+    + shareLocationToContact(contact, location, isEmergency) : Promise
+    + shareLocationToAllContacts(location, isEmergency) : Promise
+    + startLiveLocationSharing(contactName) : Promise
+    + stopLiveLocationSharing() : Object
+    + addEmergencyContact(contact) : Promise
+    + removeEmergencyContact(contactId) : Promise
+    + getEmergencyContacts() : Array
+    + updateEmergencyContact(contactId, updates) : Promise
+    + enableFallDetection() : void
+    + disableFallDetection() : void
+    + processAccelerometerData(x, y, z) : void
+    + handlePotentialFall() : Promise
+    + findContactByName(name) : Object
+    + isActive() : Boolean
+    - _syncFromApi() : Promise
+    - _logEmergencyAlert(location) : Promise
+    - _buildLocationMessage(location, isEmergency) : String
+    - _normalizePhoneForWhatsApp(phone) : String
+  }
+
+  class EmotionDetectionService {
+    + initialized : Boolean
+    - _initializing : Boolean
+    - _initQueue : Array
+    --
+    + initialize() : Promise
+    + detectEmotion(base64Image) : Promise
+    + detectEmotionFromCamera(base64Image) : Promise
+  }
+
+  class FootPlacementService {
+    + isActive : Boolean
+    + groundObstacles : Array
+    + safetyZone : Number
+    - _isProcessing : Boolean
+    - _lastProcessTime : Number
+    - _minProcessInterval : Number
+    - _realtimeCallback : Function
+    - _performanceMetrics : Object
+    - _pathHistory : Array
+    - _maxPathHistory : Number
+    - _warningCooldowns : Object
+    - _lastWarningByLevel : Object
+    - _groundLevelThreshold : Number
+    - _footpathWidth : Number
+    - _lastGuidanceText : String
+    - _lastGuidanceTime : Number
+    - _lastDropTime : Number
+    - _lastStairWarningTime : Number
+    - _lastSurfaceWarningTime : Number
+    --
+    + startMonitoring(detectedObjects, callback) : Promise
+    + stopMonitoring() : void
+    + isMonitoring() : Boolean
+    + getPerformanceMetrics() : Object
+    + processFrame(detections, depthData) : Promise
+    + speakGuidance(guidance) : Promise
+    + warnDropOff(dropInfo) : Promise
+    + warnStairs(stairInfo) : Promise
+    + warnUnevenSurface(surfaceInfo) : Promise
+    + analyzeFootPath(detectedObjects) : void
+    + calculateHazardLevel(obstacle) : String
+    + detectSurfaceType(obstacle) : String
+    + generateWarnings() : Array
+    + getSafePathRecommendation(detectedObjects) : Object
+    + getGroundObstacles() : Array
+    + setSafetyZone(meters) : void
+    + detectStairs(detectedObjects, depthData) : Object
+    + detectUnevenSurface(detectedObjects, depthData) : Object
+    + calculateVariance(numbers) : Number
+    - _gridBasedGuidance(grid, groundData) : Object
+    - _objectBasedGuidance(detections) : Object
+    - _buildDropInfo(groundData) : Object
+    - _checkAndWarnWithAdaptiveCooldown() : Promise
+    - _issueWarning(obstacle) : Promise
+    - _getSafeDirection() : String
+    - _isInFootpath(obstacle) : Boolean
+    - _predictCollisionTime(obstacle) : Number
+    - _updatePathHistory(detectedObjects) : void
+  }
+
+  class GoogleMapsService {
+    + apiKey : String
+    + baseUrl : String
+    + isNavigating : Boolean
+    + currentRoute : Object
+    + watchId : Object
+    + trafficEnabled : Boolean
+    + avoidTolls : Boolean
+    + avoidHighways : Boolean
+    + travelMode : String
+    --
+    + setApiKey(key) : void
+    + searchPlace(query, location) : Promise
+    + getNearbyPlaces(location, type, radius) : Promise
+    + getDirections(origin, destination, options) : Promise
+    + parseGoogleRoute(route) : Object
+    + startNavigation(destination, callback) : Promise
+    + stopNavigation() : Promise
+    + checkIfOffRoute(currentPosition, currentStepIndex) : Promise
+    + getTrafficInfo(origin, destination) : Promise
+    + searchNearby(location, query, radius) : Promise
+    + geocodeAddress(address) : Promise
+    + getFallbackDirections(origin, destination) : Object
+    + calculateDistance(lat1, lon1, lat2, lon2) : Number
+    + calculateBearing(lat1, lon1, lat2, lon2) : Number
+    + getCardinalDirection(bearing) : String
+    + calculateRemainingDistance(currentStepIndex) : Number
+    + calculateRemainingDuration(currentStepIndex) : Number
+    + setTravelMode(mode) : void
+    + setTrafficEnabled(enabled) : void
+    - _searchNominatim(query, location) : Promise
+    - _osrmProfile(mode) : String
+    - _osrmInstruction(step) : String
+    - _osrmManeuver(type, modifier) : String
+    - _parseOSRMRoute(data, destination) : Object
+    - _getDirectionsOSRM(origin, destination, mode) : Promise
+  }
+
+  class HazardScoringService {
+    + scoreDetection(d) : Object
+    + calculateHazardScore(detection) : Object
+  }
+
+  class LocationService {
+    + currentLocation : Object
+    + watchId : Object
+    + locationUpdateCallbacks : Array
+    --
+    + requestPermissions() : Promise
+    + getCurrentLocation() : Promise
+    + startWatchingLocation(callback) : Promise
+    + stopWatchingLocation() : void
+    + calculateDistance(lat1, lon1, lat2, lon2) : Number
+    + calculateBearing(lat1, lon1, lat2, lon2) : Number
+    + getCardinalDirection(bearing) : String
+  }
+
+  class MicToneService {
+    - _ready : Boolean
+    - _init : Promise
+    --
+    + playOn() : void
+    + playOff() : void
+    - _ensureReady() : Promise
+    - _play(filePath, durationSec) : Promise
+  }
+
+  class NavigationService {
+    + isNavigating : Boolean
+    + destination : Object
+    + route : Array
+    + currentStepIndex : Number
+    + navigationUpdateInterval : Object
+    + currentLocation : Object
+    + apiBaseUrl : String
+    + currentSessionId : String
+    --
+    + startNavigation(destination, onUpdate) : Promise
+    + generateRealTimeRoute(start, end) : Promise
+    + updateNavigation(currentLocation, onUpdate) : Promise
+    + recalculateRoute(currentLocation) : Promise
+    + calculateRemainingDistance(currentLocation) : Number
+    + provideNavigationGuidance() : void
+    + stopNavigation() : Promise
+    + getNavigationStatus() : Object
+  }
+
+  class ObjectDetectionService {
+    + model : Object
+    + isReady : Boolean
+    + cameraRef : Object
+    + apiBaseUrl : String
+    + currentDetectionSessionId : String
+    + config : Object
+    - _isProcessing : Boolean
+    - _targetFPS : Number
+    - _lastDetectionTime : Number
+    - _minDetectionInterval : Number
+    - _performanceMetrics : Object
+    - _tracks : Map
+    - _nextId : Number
+    - _voiceLastSpoken : Map
+    - _summaryLastSpoken : Number
+    - _summaryIntervalMs : Number
+    --
+    + setConfig(partial) : void
+    + loadModel() : Promise
+    + detectFromTensor(tensor, textureWidth, textureHeight) : Promise
+    + announceDetectedObjects(detections, ttsSpeak) : void
+    + getObjectDescription(detection) : String
+    + getPerformanceMetrics() : Object
+    + setTargetFPS(fps) : void
+    + getPriorityLevel(detection) : String
+    + cleanup() : Promise
+    + setCameraRef(ref) : void
+    + startDetection(callback, intervalMs) : Promise
+    + stopDetection() : Promise
+    + logDetectionsToServer(enriched) : Promise
+    - _validateBackend() : Promise
+    - _bboxToNMSFormat(bbox) : Array
+    - _globalNMS(preds) : Promise
+    - _perClassNMS(preds) : Promise
+    - _estimateDistance(objectClass, bboxHeightPixels, frameHeightPixels, verticalFOVDeg, normBox) : Number
+    - _iou(a, b) : Number
+    - _associateAndSmooth(detections) : Array
+    - _buildSceneSummary(detections) : String
+    - _generateMockDetections() : Array
+  }
+
+  class OCRService {
+    + initialized : Boolean
+    + apiBaseUrl : String
+    - _isProcessing : Boolean
+    - _lastProcessTime : Number
+    - _minProcessInterval : Number
+    - _textBuffer : Array
+    - _bufferSize : Number
+    - _performanceMetrics : Object
+    - _realtimeCallback : Function
+    - _realtimeActive : Boolean
+    - _lastTextRegions : Array
+    - _textTrackingEnabled : Boolean
+    --
+    + initialize(apiBaseUrl) : Promise
+    + startRealtimeOCR(callback, options) : Boolean
+    + stopRealtimeOCR() : void
+    + processFrame(imageBase64) : Promise
+    + readTextFromImage(imageBase64, options) : Promise
+    + checkServerHealth() : Promise
+    + getPerformanceMetrics() : Object
+    + setProcessInterval(intervalMs) : void
+    + isRealtimeActive() : Boolean
+    - _getStableText() : String
+    - _checkServerHealth() : Promise
+  }
+
+  class OfflineModeService {
+    - _useCloud : Boolean
+    - _apiBaseUrl : String
+    --
+    + setApiBaseUrl(url) : void
+    + setUseCloud(enabled) : void
+    + useCloud() : Boolean
+    + pingServer() : Promise
+    + cacheRouteData(routeId, routeData) : Promise
+    + getCachedRoute(routeId) : Promise
+    + cacheMapTiles(region, tiles) : Promise
+    + getCachedMapTiles(region) : Promise
+    + syncPendingData() : Promise
+    + isOnline() : Promise
+    + cacheRouteForOffline(dest, routeData) : Promise
+    + isRouteCached(lat, lng) : Promise
+    + getOfflineRoute(lat, lng) : Promise
+    + listOfflineRoutes() : Promise
+    + removeOfflineRoute(lat, lng) : Promise
+    - _makeDestKey(lat, lng) : String
+  }
+
+  class RouteMemoryService {
+    + savedRoutes : Array
+    + currentRecording : Object
+    + routeHistory : Array
+    + frequentDestinations : Array
+    + recentSearches : Array
+    + storageKey : String
+    + initialized : Boolean
+    --
+    + initialize() : Promise
+    + startRecording(routeName) : Promise
+    + addWaypoint(location, landmark) : Promise
+    + stopRecording() : Promise
+    + saveRoute(route) : Promise
+    + getSavedRoutes() : Array
+    + getRoute(routeId) : Object
+    + getRouteByName(name) : Object
+    + findSimilarRoutes(currentLocation, radiusMeters) : Promise
+    + getFrequentRoutes(limit) : Array
+    + getRecentRoutes(limit) : Array
+    + useRoute(routeId) : Promise
+    + deleteRoute(routeId) : Promise
+    + updateFrequentDestinations(location) : void
+    + getFrequentDestinations(limit) : Array
+    + getRecentDestinations(limit) : Array
+    + addRecentSearch(dest) : void
+    + getRecentSearches(limit) : Array
+    + suggestRoute() : Promise
+    + getStatistics() : Object
+    + exportRoutes() : Promise
+    + importRoutes(data) : Promise
+    + persist() : Promise
+    + clearAll() : Promise
+  }
+
+  class SettingsService {
+    - _listeners : Set
+    - _cache : Object
+    --
+    + getSettings() : Promise
+    + saveSettings(partial) : Promise
+    + set(key, value) : Promise
+    + get(key) : Promise
+    + addListener(cb) : Function
+    - _emit(settings) : void
+  }
+
+  class SpatialAudioService {
+    + soundObjects : Map
+    + activeSources : Map
+    + isInitialized : Boolean
+    + listenerPosition : Object
+    + listenerOrientation : Object
+    + speedOfSound : Number
+    + dopplerFactor : Number
+    + rolloffFactor : Number
+    + maxDistance : Number
+    + refDistance : Number
+    --
+    + initialize() : Promise
+    + playSpatialSound(soundId, position, options) : Promise
+    + calculate3DAudioParams(sourcePosition, sourceVelocity) : Object
+    + calculateDistanceAttenuation(distance) : Number
+    + calculatePanning(dx, dz) : Number
+    + calculateDopplerShift(sourcePos, sourceVel, listenerVel) : Number
+    + calculateElevationEffect(dy, distance) : Number
+    + applySpatialEffect(sound, spatialParams) : Promise
+    + updateListenerPosition(position, orientation) : void
+    + updateAllSources() : Promise
+    + playDirectionalBeep(angle, distance) : Promise
+    + playDirectionalStream(streamId, angle, distance, options) : Promise
+    + updateSourcePosition(soundId, newPosition, newVelocity) : Promise
+    + angleToFrequency(angle) : Number
+    + distanceToVolume(distance) : Number
+    + playNavigationCue(direction, intensity) : Promise
+    + stopSound(soundId) : Promise
+    + stopAllSounds() : Promise
+    + getActiveSourcesCount() : Number
+    + setAudioParameters(params) : void
+  }
+
+  class TextToSpeechService {
+    - _lastSpoken : Map
+    - _queue : Array
+    - _busy : Boolean
+    - _stopPending : Boolean
+    --
+    + speak(text, options, priority) : void
+    + speakImmediate(text, options) : void
+    + stop() : void
+    + isSpeakingNow() : Boolean
+    + isSpeakingAsync() : Promise
+    + getAvailableVoices() : Promise
+    + pause() : Promise
+    + resume() : Promise
+    - _stopThenFire(text, options) : void
+    - _drain() : void
+    - _fire(text, options) : void
+  }
+
+  class VoiceCommandService {
+    + isListening : Boolean
+    + recognitionTimeout : Object
+    + lastCommand : String
+    + commandHistory : Array
+    + detectedObjects : Array
+    + currentLocation : Object
+    + apiBaseUrl : String
+    + minConfidence : Number
+    - _continuousListening : Boolean
+    - _wakeWordMode : Boolean
+    - _navigationRef : Object
+    - _callbacks : Object
+    - _onStateChange : Function
+    - _sttListeners : Array
+    - _restartTimer : Object
+    - _sttActive : Boolean
+    - _errorBackoffMs : Number
+    - _maxBackoffMs : Number
+    --
+    + setNavigationRef(ref) : void
+    + setCallbacks(callbacks) : void
+    + setDetectedObjects(objects) : void
+    + setCurrentLocation(location) : void
+    + findBestMatch(input) : Object
+    + processCommand(commandText, context) : Promise
+    + startContinuousListening(onStateChange) : Promise
+    + stopContinuousListening() : void
+    + startListening(callback) : Promise
+    + stopListening() : void
+    + getCommandHistory() : Array
+    + clearHistory() : void
+    + getAvailableCommands() : Array
+    + simulateVoiceCommand(text, context) : Promise
+    - _isWakeWord(transcript) : Boolean
+    - _executeCommand(cmd, param, context) : Promise
+    - _navigateToScreen(screenName, params) : Promise
+    - _triggerEmergency() : Promise
+    - _contactEmergencyContacts() : Promise
+    - _controlDetection(start, context) : Promise
+    - _describeScene() : Promise
+    - _listNearbyObjects() : Promise
+    - _announceLocation() : Promise
+    - _identifyObject() : Promise
+    - _startNavigation(destination, context, autoNavigate) : Promise
+    - _findObject(objectName) : Promise
+    - _saveRoute(context) : Promise
+    - _readText(context) : Promise
+    - _detectEmotion() : Promise
+    - _shareLocationToContact(param) : Promise
+    - _shareLiveLocationToContact(param) : Promise
+    - _stopLiveLocation() : Promise
+    - _showHelp() : Promise
+    - _getSuggestions(input) : Array
+    - _logCommand(command, action, recognized, confidence) : Promise
+    - _setupSTTListeners() : void
+    - _removeSTTListeners() : void
+    - _startSTT() : void
+    - _scheduleRestart(delayMs) : void
+  }
+
+  class WearablesService {
+    + initialized : Boolean
+    + devices : Array
+    + smartwatch : String
+    --
+    + initialize() : Promise
+    + startScanning(onDevices) : Promise
+    + stopScanning() : void
+    + pulseDirection(direction, intensity) : Promise
+    + vibratePatternForHazard(level, relative) : Promise
+    + connectSmartwatch(deviceId) : Promise
+    + sendWatchNotification(message) : void
+    + getPhoneBatteryLevel() : Promise
+    + getBatteryStatus() : Promise
+  }
+}
+
+' ══════════════════════════════════════════════════════════════════════
+'  PACKAGE: Screens  (React functional components)
+' ══════════════════════════════════════════════════════════════════════
+package "Screens" #EAFAF1 {
+
+  class ARScreen <<Screen>> {
+    --
+    state
+    --
+    + detections : Array
+    + footResult : Object
+    + depthData : Object
+    + ocrText : String
+    + isModelReady : Boolean
+    + isDetectionActive : Boolean
+    + captureRequest : Number
+    --
+    services used
+    --
+    ObjectDetectionService
+    DepthEstimationService
+    FootPlacementService
+    OCRService
+    ARService
+    TextToSpeechService
+    SpatialAudioService
+    VoiceCommandService
+    SettingsService
+    --
+    helpers
+    --
+    + extractImageEdgeSignal(imageTensor) : Object
+    + getDetectionContentRect(viewWidth, viewHeight, aspectRatio) : Object
+  }
+
+  class HomeScreen <<Screen>> {
+    --
+    state
+    --
+    + locationStatus : String
+    + detectionActive : Boolean
+    + nearbyObjects : Array
+    --
+    services used
+    --
+    LocationService
+    TextToSpeechService
+    ObjectDetectionService
+    --
+    handlers
+    --
+    + initializeServices() : Promise
+    + handleStartDetection() : Promise
+    + handleNavigateToDestination() : void
+  }
+
+  class NavigationScreen <<Screen>> {
+    --
+    state
+    --
+    + searchQuery : String
+    + searchResults : Array
+    + isNavigating : Boolean
+    + currentStep : Object
+    + routeCoordinates : Array
+    + mapRegion : Object
+    --
+    services used
+    --
+    GoogleMapsService
+    LocationService
+    TextToSpeechService
+    RouteMemoryService
+    OfflineModeService
+    --
+    helpers
+    --
+    + decodePolyline(encoded) : Array
+    + maneuverIcon(maneuver) : String
+    + maneuverColor(maneuver) : String
+    + fmtDist(m) : String
+  }
+
+  class SettingsScreen <<Screen>> {
+    --
+    state
+    --
+    + audioEnabled : Boolean
+    + ttsEnabled : Boolean
+    + hapticEnabled : Boolean
+    + bluetoothEnabled : Boolean
+    + connectedDevices : Array
+    + precisionMode : Boolean
+    + refinementPass : Boolean
+    + fallDetectionEnabled : Boolean
+    + emergencyContactsCount : Number
+    + batteryLevel : Number
+    --
+    services used
+    --
+    BluetoothService
+    TextToSpeechService
+    SettingsService
+    ObjectDetectionService
+    EmergencyService
+    ApiService
+    WearablesService
+    EmotionDetectionService
+    OfflineModeService
+  }
+
+  class EmotionDetectionScreen <<Screen>> {
+    --
+    state
+    --
+    + hasPermission : Boolean
+    + modelsReady : Boolean
+    + initStatus : String
+    + detecting : Boolean
+    + emotion : String
+    + confidence : Number
+    --
+    services used
+    --
+    EmotionDetectionService
+    TextToSpeechService
+  }
+
+  class EmergencyContactsScreen <<Screen>> {
+    --
+    state
+    --
+    + emergencyContacts : Array
+    + isAddingContact : Boolean
+    + contactName : String
+    + contactPhone : String
+    + hasContactsPermission : Boolean
+    --
+    services used
+    --
+    TextToSpeechService
+    EmergencyService
+    ApiService
+  }
+
+  class AuthScreen <<Screen>> {
+    --
+    state
+    --
+    + isRegistering : Boolean
+    + email : String
+    + password : String
+    + confirmPassword : String
+    + name : String
+    + loading : Boolean
+    --
+    services used
+    --
+    TextToSpeechService
+    ApiService
+    --
+    handlers
+    --
+    + handleAuth() : Promise
+    + handleSocialAuth(provider) : Promise
+    + toggleMode() : void
+  }
+}
+
+' ══════════════════════════════════════════════════════════════════════
+'  MODEL RELATIONSHIPS  (Mongoose refs)
+' ══════════════════════════════════════════════════════════════════════
+User "1" <-- "0..*" UserProfile            : user_id
+User "1" <-- "0..1" UserPreferences        : user_id
+User "1" <-- "0..*" WearableDevice         : user_id
+User "1" <-- "0..*" VoiceCommand           : user_id
+User "1" <-- "0..*" SystemLog              : user_id (optional)
+User "1" <-- "0..*" SavedLocation          : user_id
+User "1" <-- "0..*" Route                  : user_id
+User "1" <-- "0..*" OfflineMap             : user_id
+User "1" <-- "0..*" OCRSession             : user_id
+User "1" <-- "0..*" NavigationSession      : user_id
+User "1" <-- "0..*" EmergencyContact       : user_id
+User "1" <-- "0..*" EmergencyAlert         : user_id
+User "1" <-- "0..*" DetectionSession       : user_id
+Route "1" <-- "0..*" NavigationSession     : route_id (optional)
+DetectionSession "1" <-- "0..*" DetectedObject : session_id
+
+' ══════════════════════════════════════════════════════════════════════
+'  SERVICE DEPENDENCIES  (uses / calls)
+' ══════════════════════════════════════════════════════════════════════
+AppInitializer ..> OCRService               : initializes
+AppInitializer ..> EmotionDetectionService  : initializes
+AppInitializer ..> DepthEstimationService   : initializes
+AppInitializer ..> OfflineModeService       : pings server
+AppInitializer ..> LocationService          : requestPermissions
+AppInitializer ..> ObjectDetectionService   : loadModel / requestPermissions
+AppInitializer ..> SpatialAudioService      : initializes
+AppInitializer ..> BluetoothService         : initializes
+AppInitializer ..> NavigationService        : stopNavigation (cleanup)
+AppInitializer ..> ARService                : dispose (cleanup)
+AppInitializer ..> TextToSpeechService      : speaks status
+
+ObjectDetectionService ..> HazardScoringService : scoreDetection
+
+FootPlacementService ..> TextToSpeechService    : speak
+FootPlacementService ..> SpatialAudioService    : playDirectionalBeep
+
+NavigationService ..> LocationService           : getCurrentLocation / watch
+NavigationService ..> TextToSpeechService       : speak
+NavigationService ..> SpatialAudioService       : playNavigationCue
+
+GoogleMapsService ..> TextToSpeechService       : speak
+GoogleMapsService ..> SpatialAudioService       : playDirectionalBeep
+
+EmergencyService ..> TextToSpeechService        : speak
+EmergencyService ..> LocationService            : getCurrentLocation
+
+WearablesService ..> BluetoothService           : delegate
+WearablesService ..> TextToSpeechService        : speak
+
+VoiceCommandService ..> TextToSpeechService     : speak
+VoiceCommandService ..> ObjectDetectionService  : context
+VoiceCommandService ..> LocationService         : getCurrentLocation
+VoiceCommandService ..> MicToneService          : playOn / playOff
+VoiceCommandService ..> EmergencyService        : dynamic require
+
+RouteMemoryService ..> LocationService          : calculateDistance
+RouteMemoryService ..> TextToSpeechService      : speak
+
+OCRService ..> OfflineModeService               : imported
+EmotionDetectionService ..> TextToSpeechService : speak
+
+' ══════════════════════════════════════════════════════════════════════
+'  SCREEN → SERVICE DEPENDENCIES
+' ══════════════════════════════════════════════════════════════════════
+ARScreen ..> ObjectDetectionService
+ARScreen ..> DepthEstimationService
+ARScreen ..> FootPlacementService
+ARScreen ..> OCRService
+ARScreen ..> ARService
+ARScreen ..> TextToSpeechService
+ARScreen ..> SpatialAudioService
+ARScreen ..> VoiceCommandService
+ARScreen ..> SettingsService
+
+HomeScreen ..> LocationService
+HomeScreen ..> TextToSpeechService
+HomeScreen ..> ObjectDetectionService
+
+NavigationScreen ..> GoogleMapsService
+NavigationScreen ..> LocationService
+NavigationScreen ..> TextToSpeechService
+NavigationScreen ..> RouteMemoryService
+NavigationScreen ..> OfflineModeService
+
+SettingsScreen ..> BluetoothService
+SettingsScreen ..> TextToSpeechService
+SettingsScreen ..> SettingsService
+SettingsScreen ..> ObjectDetectionService
+SettingsScreen ..> EmergencyService
+SettingsScreen ..> ApiService
+SettingsScreen ..> WearablesService
+SettingsScreen ..> EmotionDetectionService
+SettingsScreen ..> OfflineModeService
+
+EmotionDetectionScreen ..> EmotionDetectionService
+EmotionDetectionScreen ..> TextToSpeechService
+
+EmergencyContactsScreen ..> TextToSpeechService
+EmergencyContactsScreen ..> EmergencyService
+EmergencyContactsScreen ..> ApiService
+
+AuthScreen ..> TextToSpeechService
+AuthScreen ..> ApiService
+
+@enduml

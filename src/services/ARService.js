@@ -21,7 +21,7 @@ class ARService {
     this.renderer.setPixelRatio(this.pixelRatio);
     this.scene = new THREE.Scene();
     this.scene.background = null;
-    this.camera = new THREE.PerspectiveCamera(60, (width || gl.drawingBufferWidth) / (height || gl.drawingBufferHeight), 0.01, 1000);
+    this.camera = new THREE.PerspectiveCamera(70, (width || gl.drawingBufferWidth) / (height || gl.drawingBufferHeight), 0.01, 1000);
     const light = new THREE.DirectionalLight(0xffffff, 1.0);
     light.position.set(0, 2, 2);
     this.scene.add(light);

@@ -7,6 +7,9 @@ class RouteMemoryService {
     this.currentRecording = null;
     this.routeHistory = [];
     this.frequentDestinations = [];
+    // Named recent searches — stores { name, address, latitude, longitude, searchedAt }
+    // so the navigation screen can display real place names (not just coordinates).
+    this.recentSearches = [];
     this.storageKey = '@sensei_route_memory';
     this.initialized = false;
   }
@@ -18,6 +21,7 @@ class RouteMemoryService {
         this.savedRoutes = data.routes || [];
         this.routeHistory = data.history || [];
         this.frequentDestinations = data.destinations || [];
+        this.recentSearches = data.recentSearches || [];
       }
       this.initialized = true;
       return true;
@@ -79,7 +83,7 @@ class RouteMemoryService {
       (this.currentRecording.endTime - this.currentRecording.startTime) / 1000; 
     await this.saveRoute(this.currentRecording);
     await TextToSpeechService.speak(
-      `Route saved: ${this.currentRecording.name}. Distance: ${this.currentRecording.distance.toFixed(0)} meters`
+      `Route saved: ${this.currentRecording.name}. Distance: ${(this.currentRecording.distance || 0).toFixed(0)} meters`
     );
     const savedRoute = this.currentRecording;
     this.currentRecording = null;
@@ -183,6 +187,44 @@ class RouteMemoryService {
       .sort((a, b) => new Date(b.lastVisit) - new Date(a.lastVisit))
       .slice(0, limit);
   }
+
+  /**
+   * Record a named destination the user actively navigated to.
+   * Deduplicates: if a place with the same name and similar coordinates
+   * (within ~100 m) already exists it is moved to the top instead of
+   * creating a duplicate entry.
+   *
+   * @param {{ name: string, address?: string, latitude: number, longitude: number }} dest
+   */
+  addRecentSearch(dest) {
+    if (!dest?.name || dest.latitude == null || dest.longitude == null) return;
+    // Remove any existing entry for the same place
+    this.recentSearches = this.recentSearches.filter(r => {
+      const sameName = r.name?.toLowerCase() === dest.name.toLowerCase();
+      const distLat = Math.abs((r.latitude || 0) - dest.latitude);
+      const distLng = Math.abs((r.longitude || 0) - dest.longitude);
+      const nearby = distLat < 0.001 && distLng < 0.001; // ~100 m
+      return !(sameName || nearby);
+    });
+    // Prepend (most recent first)
+    this.recentSearches.unshift({
+      name:       dest.name,
+      address:    dest.address || '',
+      latitude:   dest.latitude,
+      longitude:  dest.longitude,
+      searchedAt: new Date().toISOString(),
+    });
+    // Keep a rolling window of 20
+    this.recentSearches = this.recentSearches.slice(0, 20);
+    this.persist(); // fire-and-forget — don't block the caller
+  }
+
+  /**
+   * Returns recent searches sorted newest-first.
+   */
+  getRecentSearches(limit = 8) {
+    return this.recentSearches.slice(0, limit);
+  }
   async suggestRoute() {
     const currentLocation = await LocationService.getCurrentLocation();
     const currentHour = new Date().getHours();
@@ -200,8 +242,8 @@ class RouteMemoryService {
   getStatistics() {
     const totalRoutes = this.savedRoutes.length;
     const totalDistance = this.savedRoutes.reduce((sum, r) => sum + (r.distance || 0), 0);
-    const mostUsed = this.savedRoutes.sort((a, b) => b.useCount - a.useCount)[0];
-    const longestRoute = this.savedRoutes.sort((a, b) => b.distance - a.distance)[0];
+    const mostUsed = [...this.savedRoutes].sort((a, b) => b.useCount - a.useCount)[0];
+    const longestRoute = [...this.savedRoutes].sort((a, b) => b.distance - a.distance)[0];
     return {
       totalRoutes,
       totalDistance: totalDistance.toFixed(0),
@@ -213,17 +255,19 @@ class RouteMemoryService {
   }
   async exportRoutes() {
     return {
-      routes: this.savedRoutes,
-      history: this.routeHistory,
-      destinations: this.frequentDestinations,
-      exportDate: new Date()
+      routes:         this.savedRoutes,
+      history:        this.routeHistory,
+      destinations:   this.frequentDestinations,
+      recentSearches: this.recentSearches,
+      exportDate:     new Date()
     };
   }
   async importRoutes(data) {
     try {
-      if (data.routes) this.savedRoutes = data.routes;
-      if (data.history) this.routeHistory = data.history;
-      if (data.destinations) this.frequentDestinations = data.destinations;
+      if (data.routes)         this.savedRoutes          = data.routes;
+      if (data.history)        this.routeHistory          = data.history;
+      if (data.destinations)   this.frequentDestinations  = data.destinations;
+      if (data.recentSearches) this.recentSearches        = data.recentSearches;
       await this.persist();
       return true;
     } catch (error) {
@@ -236,7 +280,8 @@ class RouteMemoryService {
       const data = {
         routes: this.savedRoutes,
         history: this.routeHistory,
-        destinations: this.frequentDestinations
+        destinations: this.frequentDestinations,
+        recentSearches: this.recentSearches,
       };
       await AsyncStorage.setItem(this.storageKey, JSON.stringify(data));
     } catch (error) {
@@ -247,6 +292,7 @@ class RouteMemoryService {
     this.savedRoutes = [];
     this.routeHistory = [];
     this.frequentDestinations = [];
+    this.recentSearches = [];
     await AsyncStorage.removeItem(this.storageKey);
   }
 }

@@ -14,7 +14,12 @@ class GoogleMapsService {
     this.trafficEnabled = true;
     this.avoidTolls = false;
     this.avoidHighways = false;
-    this.travelMode = 'walking'; 
+    this.travelMode = 'walking';
+    // Navigation session state — prevents false "arrived" on stale/cached GPS
+    this._navOrigin = null;
+    this._navDestination = null;
+    this._navStartedAt = 0;
+    this._maxDistanceFromStart = 0;
   }
   setApiKey(key) {
     this.apiKey = key;
@@ -379,54 +384,115 @@ class GoogleMapsService {
   }
   async startNavigation(destination, callback) {
     try {
+      // Always request a fresh fix — cached coords cause false arrival when the
+      // user has moved (e.g. bedroom pin → living room) but GPS cache is stale.
       const origin = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High
+        accuracy: Location.Accuracy.BestForNavigation,
+        maximumAge: 0,
+        mayShowUserSettingsDialog: true,
       });
       const originCoords = {
         latitude: origin.coords.latitude,
-        longitude: origin.coords.longitude
+        longitude: origin.coords.longitude,
       };
+
+      const destLat = destination.latitude ?? destination.lat;
+      const destLng = destination.longitude ?? destination.lng;
+      if (destLat == null || destLng == null) {
+        throw new Error('Destination coordinates missing');
+      }
+
+      const distToDest = this.calculateDistance(
+        originCoords.latitude, originCoords.longitude, destLat, destLng,
+      );
+
+      // Pinned / short indoor routes: GPS often cannot distinguish rooms in the
+      // same home — do not start a fake route that instantly says "arrived".
+      const MIN_NAV_DISTANCE_M = 25;
+      if (distToDest < MIN_NAV_DISTANCE_M) {
+        const msg = distToDest < 5
+          ? `Your GPS shows you are already at ${destination.name || 'that location'}. Phone GPS usually cannot tell rooms apart indoors. Try moving near a window for a better signal, or use indoor landmark mapping for room-to-room guidance.`
+          : `You are only ${Math.round(distToDest)} meters from ${destination.name || 'that location'}. GPS may not have updated since you moved. Wait a moment near a window and try again, or use indoor navigation with marked landmarks.`;
+        await TextToSpeechService.speak(msg);
+        throw new Error('destination_too_close');
+      }
+
+      this._navOrigin = { ...originCoords };
+      this._navDestination = { lat: destLat, lng: destLng };
+      this._navStartedAt = Date.now();
+      this._maxDistanceFromStart = 0;
+
       this.currentRoute = await this.getDirections(originCoords, destination);
       if (!this.currentRoute) {
         throw new Error('Could not get directions');
       }
+
+      // Degenerate zero-length route (same coords) — refuse to navigate
+      if ((this.currentRoute.totalDistance ?? 0) < MIN_NAV_DISTANCE_M) {
+        await TextToSpeechService.speak(
+          `Cannot navigate to ${destination.name || 'that location'}. Your current GPS position is too close to the saved pin. Move to a different area and try again.`,
+        );
+        throw new Error('route_too_short');
+      }
+
       this.isNavigating = true;
       let currentStepIndex = 0;
       this.watchId = await Location.watchPositionAsync(
         {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 5000, 
-          distanceInterval: 10 
+          accuracy: Location.Accuracy.BestForNavigation,
+          timeInterval: 3000,
+          distanceInterval: 5,
         },
         async (location) => {
           if (!this.isNavigating) return;
           const currentPosition = {
             latitude: location.coords.latitude,
-            longitude: location.coords.longitude
+            longitude: location.coords.longitude,
           };
+
+          const distFromStart = this.calculateDistance(
+            currentPosition.latitude, currentPosition.longitude,
+            this._navOrigin.latitude, this._navOrigin.longitude,
+          );
+          this._maxDistanceFromStart = Math.max(this._maxDistanceFromStart, distFromStart);
+
+          const distToFinal = this.calculateDistance(
+            currentPosition.latitude, currentPosition.longitude,
+            this._navDestination.lat, this._navDestination.lng,
+          );
+
+          // True arrival: near destination AND user has actually moved or enough time passed
+          if (this._hasTrulyArrived(currentPosition, distToFinal)) {
+            await TextToSpeechService.speak('You have arrived at your destination');
+            this.stopNavigation();
+            return;
+          }
+
           if (currentStepIndex < this.currentRoute.steps.length) {
             const currentStep = this.currentRoute.steps[currentStepIndex];
             const distanceToStepEnd = this.calculateDistance(
               currentPosition.latitude,
               currentPosition.longitude,
               currentStep.endLocation.lat,
-              currentStep.endLocation.lng
+              currentStep.endLocation.lng,
             );
-            if (distanceToStepEnd < 20) {
+            // Advance steps only after user has moved away from the start point
+            const canAdvanceSteps = this._maxDistanceFromStart > 8
+              || (Date.now() - this._navStartedAt) > 8000;
+            if (canAdvanceSteps && distanceToStepEnd < 20) {
               currentStepIndex++;
               if (currentStepIndex < this.currentRoute.steps.length) {
                 const nextStep = this.currentRoute.steps[currentStepIndex];
-                await TextToSpeechService.speak(nextStep.instruction);
+                if (nextStep.instruction && !nextStep.instruction.toLowerCase().includes('you have arrived')) {
+                  await TextToSpeechService.speak(nextStep.instruction);
+                }
                 const bearing = this.calculateBearing(
                   currentPosition.latitude,
                   currentPosition.longitude,
                   nextStep.endLocation.lat,
-                  nextStep.endLocation.lng
+                  nextStep.endLocation.lng,
                 );
                 await SpatialAudioService.playDirectionalBeep(bearing, distanceToStepEnd);
-              } else {
-                await TextToSpeechService.speak('You have arrived at your destination');
-                this.stopNavigation();
               }
             }
             const isOffRoute = await this.checkIfOffRoute(currentPosition, currentStepIndex);
@@ -434,6 +500,8 @@ class GoogleMapsService {
               await TextToSpeechService.speak('Recalculating route');
               this.currentRoute = await this.getDirections(currentPosition, destination);
               currentStepIndex = 0;
+              this._navOrigin = { ...currentPosition };
+              this._maxDistanceFromStart = 0;
             }
             if (callback) {
               callback({
@@ -444,21 +512,25 @@ class GoogleMapsService {
                 remainingDistance: this.calculateRemainingDistance(currentStepIndex),
                 estimatedTimeMinutes: Math.ceil(this.calculateRemainingDuration(currentStepIndex) / 60),
                 currentSpeed: location.coords.speed || 0,
+                currentPosition,
                 direction: this.getCardinalDirection(
                   this.calculateBearing(
                     currentPosition.latitude,
                     currentPosition.longitude,
                     this.currentRoute.steps[currentStepIndex]?.endLocation.lat,
-                    this.currentRoute.steps[currentStepIndex]?.endLocation.lng
-                  )
-                )
+                    this.currentRoute.steps[currentStepIndex]?.endLocation.lng,
+                  ),
+                ),
               });
             }
           }
-        }
+        },
       );
       if (this.currentRoute.steps.length > 0) {
-        await TextToSpeechService.speak(this.currentRoute.steps[0].instruction);
+        const first = this.currentRoute.steps[0].instruction;
+        if (first && !first.toLowerCase().includes('you have arrived')) {
+          await TextToSpeechService.speak(first);
+        }
       }
       return this.currentRoute;
     } catch (error) {
@@ -467,8 +539,30 @@ class GoogleMapsService {
       throw error;
     }
   }
+
+  /** Prevent instant false arrival when origin ≈ destination (stale GPS). */
+  _hasTrulyArrived(currentPosition, distToFinal) {
+    const ARRIVAL_RADIUS_M = 18;
+    if (distToFinal > ARRIVAL_RADIUS_M) return false;
+
+    const elapsed = Date.now() - this._navStartedAt;
+    const movedFromStart = this._maxDistanceFromStart > 10;
+    const routeDist = this.currentRoute?.totalDistance ?? 0;
+
+    // Must have been navigating for at least 5 s OR moved meaningfully
+    if (elapsed < 5000 && !movedFromStart) return false;
+
+    // Short routes: require actual movement toward destination
+    if (routeDist < 40 && !movedFromStart) return false;
+
+    return true;
+  }
   async stopNavigation() {
     this.isNavigating = false;
+    this._navOrigin = null;
+    this._navDestination = null;
+    this._navStartedAt = 0;
+    this._maxDistanceFromStart = 0;
     if (this.watchId) {
       this.watchId.remove();
       this.watchId = null;

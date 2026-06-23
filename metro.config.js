@@ -7,12 +7,15 @@
 //
 //  2. transformIgnorePatterns — Metro's default blocklist excludes ALL of
 //     node_modules.  We must unblock the packages that ship ES-module or
-//     TypeScript source so Babel can transform them:
-//       • @tensorflow/* family
-//       • @vladmandic/face-api  (ESM build resolved via "browser" package field)
-//       • expo-* and react-native-* are already unblocked by the Expo default
-//         but are kept here for clarity.
+//     TypeScript source so Babel can transform them.
+//
+//  3. blockList — exclude android/.gradle, build outputs, and nested Gradle
+//     caches inside node_modules.  Without this, metro-file-map tries to
+//     serialize hundreds of thousands of files and crashes with OOM on Windows
+//     (especially when the project lives under OneDrive).
 
+const path = require('path');
+const os = require('os');
 const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
@@ -20,9 +23,7 @@ const config = getDefaultConfig(__dirname);
 // ── 1. Allow Metro to process .cjs files ─────────────────────────────────────
 config.resolver.sourceExts.push('cjs');
 
-// ── 2. Transform TF.js + face-api packages (they ship ESM / TS source) ───────
-// The default Expo pattern already un-ignores react-native|expo|… packages.
-// We append the TF.js and face-api scopes to that allowlist.
+// ── 2. Transform TF.js + face-api packages ───────────────────────────────────
 config.transformer.getTransformOptions = async () => ({
   transform: {
     experimentalImportSupport: false,
@@ -30,16 +31,6 @@ config.transformer.getTransformOptions = async () => ({
   },
 });
 
-// Unblock @tensorflow/* and @vladmandic/* from the default ignore list.
-// The Expo default is roughly: /node_modules\/(?!(react-native|expo|…)\/).*/
-// We patch it so those extra scopes are also transformed by Babel.
-const defaultBlocklist = config.resolver.blockList;
-const originalTransformIgnorePatterns =
-  config.transformer.transformIgnorePatterns ?? [
-    'node_modules/(?!(react-native|@react-native|expo|@expo|react-navigation|@react-navigation)/)',
-  ];
-
-// Replace the single default pattern (first element) with an extended one.
 config.transformer.transformIgnorePatterns = [
   'node_modules/(?!(' +
     [
@@ -49,10 +40,44 @@ config.transformer.transformIgnorePatterns = [
       '@expo',
       'react-navigation',
       '@react-navigation',
-      '@tensorflow',          // tfjs core + tfjs-react-native
-      '@vladmandic',          // face-api ESM build
+      '@tensorflow',
+      '@vladmandic',
     ].join('|') +
   ')/)',
 ];
+
+// ── 3. Exclude build / Gradle artifacts from the file map (prevents OOM) ─────
+const escapeForRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const root = escapeForRegExp(__dirname.replace(/\\/g, '/'));
+
+config.resolver.blockList = new RegExp(
+  [
+    `${root}/android/\\.gradle/.*`,
+    `${root}/android/build/.*`,
+    `${root}/android/app/build/.*`,
+    `${root}/ios/build/.*`,
+    `${root}/ios/Pods/.*`,
+    `${root}/server/models/.*`,
+    `${root}/docs/.*\\.pdf`,
+    `${root}/node_modules/.*/\\.gradle/.*`,
+    `${root}/node_modules/@react-native/gradle-plugin/\\.gradle/.*`,
+    `${root}/node_modules/@react-native/gradle-plugin/build/.*`,
+    `${root}/node_modules/.*/android/build/.*`,
+    `${root}/node_modules/puppeteer/.*`,
+    `${root}/node_modules/puppeteer-core/.*`,
+  ].join('|'),
+);
+
+// ── 4. Store Metro cache outside OneDrive (avoids clone/serialize failures) ──
+try {
+  const { FileStore } = require('metro-cache');
+  config.cacheStores = [
+    new FileStore({
+      root: path.join(os.tmpdir(), 'sensei-metro-cache'),
+    }),
+  ];
+} catch {
+  // metro-cache layout differs across versions — non-fatal
+}
 
 module.exports = config;

@@ -17,13 +17,17 @@ class OfflineModeService {
   }
   async pingServer() {
     const base = this._apiBaseUrl || API_BASE_URL;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
     try {
-      const res = await fetch(`${base}/api/health`);
+      const res = await fetch(`${base}/api/health`, { signal: controller.signal });
       if (!res.ok) return false;
       const data = await res.json();
       return data?.status === 'ok';
     } catch (e) {
       return false;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -150,6 +154,122 @@ class OfflineModeService {
    */
   async isOnline() {
     return this.pingServer();
+  }
+
+  // ── Named destination cache (dedup by coordinates) ──────────────────────────
+
+  /**
+   * Build a stable storage key from destination coordinates.
+   * Rounds to ~100 m precision so nearby re-searches reuse the same entry.
+   */
+  _makeDestKey(lat, lng) {
+    const rLat = Math.round(lat * 1000);
+    const rLng = Math.round(lng * 1000);
+    return `@sensei_offline_named_${rLat}_${rLng}`;
+  }
+
+  /**
+   * Cache a full route (dest info + route polyline/steps) to local storage.
+   * Silently skips the write if the destination is already cached (dedup).
+   *
+   * @param {{ name, address, latitude, longitude }} dest
+   * @param {object} routeData  – whatever GoogleMapsService returns
+   * @returns {{ key: string, alreadyCached: boolean }}
+   */
+  async cacheRouteForOffline(dest, routeData) {
+    try {
+      const key = this._makeDestKey(dest.latitude, dest.longitude);
+      const existing = await AsyncStorage.getItem(key);
+      if (existing) {
+        return { key, alreadyCached: true };
+      }
+      const payload = {
+        dest: {
+          name: dest.name,
+          address: dest.address || '',
+          latitude: dest.latitude,
+          longitude: dest.longitude,
+        },
+        routeData,
+        cachedAt: new Date().toISOString(),
+      };
+      await AsyncStorage.setItem(key, JSON.stringify(payload));
+      return { key, alreadyCached: false };
+    } catch (e) {
+      console.error('[OfflineMode] cacheRouteForOffline error:', e);
+      return { key: null, alreadyCached: false };
+    }
+  }
+
+  /**
+   * Returns true if a route to the given coordinates is already cached.
+   */
+  async isRouteCached(lat, lng) {
+    try {
+      const key = this._makeDestKey(lat, lng);
+      const val = await AsyncStorage.getItem(key);
+      return val !== null;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Retrieve the cached route for given coordinates.
+   * Returns null if not cached.
+   */
+  async getOfflineRoute(lat, lng) {
+    try {
+      const key = this._makeDestKey(lat, lng);
+      const raw = await AsyncStorage.getItem(key);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      console.error('[OfflineMode] getOfflineRoute error:', e);
+      return null;
+    }
+  }
+
+  /**
+   * List all destinations cached for offline use, newest first.
+   */
+  async listOfflineRoutes() {
+    try {
+      const allKeys = await AsyncStorage.getAllKeys();
+      const namedKeys = allKeys.filter(k => k.startsWith('@sensei_offline_named_'));
+      if (namedKeys.length === 0) return [];
+      const pairs = await AsyncStorage.multiGet(namedKeys);
+      const result = pairs
+        .map(([, raw]) => {
+          if (!raw) return null;
+          try {
+            const data = JSON.parse(raw);
+            return { dest: data.dest, cachedAt: data.cachedAt };
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean)
+        .sort((a, b) => new Date(b.cachedAt) - new Date(a.cachedAt));
+      return result;
+    } catch (e) {
+      console.error('[OfflineMode] listOfflineRoutes error:', e);
+      return [];
+    }
+  }
+
+  /**
+   * Remove a cached offline route by destination coordinates.
+   */
+  async removeOfflineRoute(lat, lng) {
+    try {
+      const key = this._makeDestKey(lat, lng);
+      await AsyncStorage.removeItem(key);
+      return true;
+    } catch (e) {
+      console.error('[OfflineMode] removeOfflineRoute error:', e);
+      return false;
+    }
   }
 }
 

@@ -22,7 +22,7 @@ class NavigationService {
       const currentLocation = await LocationService.getCurrentLocation();
       this.currentLocation = currentLocation;
       this.route = await this.generateRealTimeRoute(currentLocation, destination);
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await AsyncStorage.getItem('@sensei_auth_token');
       if (token) {
         try {
           const response = await fetch(`${this.apiBaseUrl}/api/navigation/route`, {
@@ -229,7 +229,7 @@ class NavigationService {
   }
   async stopNavigation() {
     if (this.currentSessionId) {
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await AsyncStorage.getItem('@sensei_auth_token');
       if (token) {
         try {
           await fetch(`${this.apiBaseUrl}/api/navigation/stop`, {

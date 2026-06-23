@@ -49,9 +49,22 @@ async function getTesseractWorker() {
       // re-downloading from the CDN (~10–60 s).
       cachePath: TESSERACT_CACHE_DIR,
     });
-    // Optimise for signs / labels: assume single block of text
+    // PSM 11 (SPARSE_TEXT): find as much text as possible without imposing a
+    // layout constraint.  PSM 6 (SINGLE_BLOCK) forced Tesseract to interpret
+    // the *entire* image as one text block, causing background textures and
+    // out-of-focus regions to be mis-read as garbled characters.  PSM 11 only
+    // picks up high-confidence text "islands", which is exactly what we want
+    // when pointing a phone camera at a sign or label in a real environment.
+    //
+    // tessedit_char_whitelist: restricts the output alphabet to printable ASCII
+    // word characters + common punctuation.  Any character outside this set
+    // (e.g. ¢ £ € ¥ § ← special Unicode that Tesseract hallucinates from image
+    // noise) is silently dropped at the recognition stage before we even see it.
     await worker.setParameters({
-      tessedit_pageseg_mode: '6',   // PSM_SINGLE_BLOCK — good for signs
+      tessedit_pageseg_mode: '11',  // PSM_SPARSE_TEXT — best for real-world sign/label images
+      tessedit_char_whitelist:
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' +
+        '0123456789 .,!?-:;/()\'"@#%&+=',
     });
     _tesseractWorker = worker;
     // Drain the queue
@@ -85,11 +98,80 @@ router.post('/ocr', async (req, res) => {
     let ocrConfidence = 0;
     try {
       const worker = await getTesseractWorker();
-      const { data } = await worker.recognize(imageBuffer);
-      // data.text is the raw recognised text; clean it up
-      ocrText = (data.text || '').replace(/\s+/g, ' ').trim();
-      // data.confidence is 0-100; normalise to 0-1
-      ocrConfidence = parseFloat(((data.confidence || 0) / 100).toFixed(2));
+
+      // Race the recognition against a 25 s hard timeout.
+      // Without this, a corrupted or extremely large image can cause the
+      // Tesseract worker to hang indefinitely, blocking the route handler
+      // until the client's 120 s AbortController fires — and the user hears
+      // nothing at all.  25 s is generous for a 1200 px image; typical
+      // recognition after the resize fix takes under 4 s.
+      const TESSERACT_TIMEOUT_MS = 25000;
+      const { data } = await Promise.race([
+        worker.recognize(imageBuffer),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Tesseract timed out after ${TESSERACT_TIMEOUT_MS / 1000}s`)),
+            TESSERACT_TIMEOUT_MS
+          )
+        ),
+      ]);
+
+      // ── Per-word confidence filtering ─────────────────────────────────────
+      // Tesseract returns a confidence score (0–100) for every detected word.
+      // Words below MIN_WORD_CONF are almost always noise: background texture,
+      // camera glare, or encoding artefacts.  We rebuild the output only from
+      // words that:
+      //   (a) confidence ≥ MIN_WORD_CONF
+      //   (b) contain at least 2 consecutive alphanumeric characters — this
+      //       rejects lone symbols like "¢", "a|", "::" that technically pass
+      //       a single-char /[a-zA-Z0-9]/ test but are clearly not real words.
+      //
+      // ── Per-line quality gate ─────────────────────────────────────────────
+      // After collecting good words for a line we also check that ≥60 % of the
+      // non-space characters in the assembled line text are alphanumeric.  A
+      // real word like "sensei" scores 100 %; a garbage line like "|.a-:#" scores
+      // ~17 % and is discarded entirely.
+      const MIN_WORD_CONF = 60;   // raised from 50 — real sign text is usually 70–95
+      const LINE_ALPHA_RATIO = 0.60; // min fraction of non-space chars that must be a-z/A-Z/0-9
+      const ocrLines = [];
+      let totalConf = 0, wordCount = 0;
+
+      if (data.lines && data.lines.length > 0) {
+        for (const line of data.lines) {
+          // Filter words: must meet confidence AND have ≥2 clean alphanumeric chars.
+          const goodWords = (line.words || []).filter(w => {
+            if (w.confidence < MIN_WORD_CONF) return false;
+            // Strip everything except letters/digits; require at least 2 remain.
+            const alphaOnly = (w.text || '').replace(/[^a-zA-Z0-9]/g, '');
+            return alphaOnly.length >= 2;
+          });
+
+          if (goodWords.length > 0) {
+            const lineText = goodWords.map(w => w.text.trim()).join(' ');
+            // Line quality gate: fraction of non-space chars that are alphanumeric.
+            const nonSpace  = lineText.replace(/\s/g, '');
+            const alphaNum  = nonSpace.replace(/[^a-zA-Z0-9]/g, '');
+            const ratio     = nonSpace.length > 0 ? alphaNum.length / nonSpace.length : 0;
+            if (ratio >= LINE_ALPHA_RATIO) {
+              ocrLines.push(lineText);
+              goodWords.forEach(w => { totalConf += w.confidence; wordCount++; });
+            }
+          }
+        }
+      }
+
+      // If line-level data was unavailable fall back to raw text (older Tesseract).
+      if (ocrLines.length === 0 && data.text) {
+        ocrText = data.text.replace(/[^\x20-\x7E\n]/g, '').replace(/\s+/g, ' ').trim();
+        ocrConfidence = parseFloat(((data.confidence || 0) / 100).toFixed(2));
+      } else {
+        ocrText = ocrLines.join('\n').replace(/\s+/g, ' ').trim();
+        // Confidence = average of the words we actually kept (more meaningful
+        // than the aggregate which includes all the noise we just discarded).
+        ocrConfidence = wordCount > 0
+          ? parseFloat((totalConf / wordCount / 100).toFixed(2))
+          : 0;
+      }
     } catch (tessErr) {
       console.error('OCR: Tesseract recognition failed:', tessErr.message || tessErr);
       // Return empty but valid response so the client doesn't crash
@@ -138,31 +220,9 @@ router.post('/ocr', async (req, res) => {
 });
 
 router.post('/ocr/translate', requireAuth, async (req, res) => {
-  try {
-    const { session_id, target_language } = req.body || {};
-    
-    const session = await OCRSession.findOneAndUpdate(
-      { _id: session_id, user_id: req.user.id },
-      { 
-        translated_text: 'Translated text sample',
-        translation_language: target_language 
-      },
-      { new: true }
-    );
-
-    if (!session) {
-      return res.status(404).json({ error: 'OCR session not found' });
-    }
-
-    res.json({
-      original: session.detected_text,
-      translated: session.translated_text,
-      target_language: session.translation_language
-    });
-  } catch (error) {
-    console.error('Translation error:', error);
-    res.status(500).json({ error: 'Translation failed' });
-  }
+  // Translation is not yet implemented. A real translation API (e.g. LibreTranslate
+  // or Google Translate) must be integrated before this endpoint is usable.
+  res.status(501).json({ error: 'Translation not implemented' });
 });
 
 router.post('/detection/start', requireAuth, async (req, res) => {

@@ -198,7 +198,7 @@ class EmergencyService {
   // ── Private: log alert to server ──────────────────────────────────────────
   async _logEmergencyAlert(location) {
     try {
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await AsyncStorage.getItem('@sensei_auth_token');
       if (!token) return;
       await fetch(`${this.apiBaseUrl}/api/emergency/alert`, {
         method: 'POST',

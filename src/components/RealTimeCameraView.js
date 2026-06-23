@@ -115,7 +115,7 @@ export default function RealTimeCameraView({ onDetections, isActive, style }) {
         device={device}
         isActive={isActive}
         frameProcessor={frameProcessor}
-        frameProcessorFps={10}
+        frameProcessorFps={15}
       />
       {isActive && detections.map((d, i) => (
         <View

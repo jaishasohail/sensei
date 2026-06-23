@@ -58,6 +58,12 @@ class ApiService {
       const data = await response.json();
 
       if (!response.ok) {
+        // Auto-clear an invalid or expired token so the app doesn't keep
+        // hammering the server with a dead credential on every request.
+        // The auth gate in App.js will redirect to login once token is null.
+        if (response.status === 401) {
+          await this.clearToken();
+        }
         throw new Error(data.error || `HTTP ${response.status}`);
       }
 

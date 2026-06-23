@@ -14,29 +14,63 @@ class LocationService {
       return false;
     }
   }
-  async getCurrentLocation() {
+  async getCurrentLocation(options = {}) {
     try {
       const hasPermission = await this.requestPermissions();
       if (!hasPermission) {
         throw new Error('Location permission denied');
       }
       const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
+        accuracy: options.accuracy ?? Location.Accuracy.High,
+        maximumAge: options.maximumAge ?? 10000,
+        mayShowUserSettingsDialog: true,
       });
-      this.currentLocation = {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        altitude: location.coords.altitude,
-        accuracy: location.coords.accuracy,
-        heading: location.coords.heading,
-        speed: location.coords.speed,
-        timestamp: location.timestamp,
-      };
+      this.currentLocation = this._normalizeLocation(location);
       return this.currentLocation;
     } catch (error) {
       console.error('Get location error:', error);
       throw error;
     }
+  }
+
+  /**
+   * Force a new GPS fix — never use a cached position older than 0 ms.
+   * Use before navigation, pinning, or any time stale coords cause false arrival.
+   */
+  async getFreshLocation() {
+    try {
+      const hasPermission = await this.requestPermissions();
+      if (!hasPermission) {
+        throw new Error('Location permission denied');
+      }
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.BestForNavigation,
+        maximumAge: 0,
+        mayShowUserSettingsDialog: true,
+      });
+      this.currentLocation = this._normalizeLocation(location);
+      return this.currentLocation;
+    } catch (error) {
+      console.warn('Fresh location failed, trying last known:', error?.message);
+      const last = await Location.getLastKnownPositionAsync();
+      if (last?.coords) {
+        this.currentLocation = this._normalizeLocation(last);
+        return this.currentLocation;
+      }
+      throw error;
+    }
+  }
+
+  _normalizeLocation(location) {
+    return {
+      latitude: location.coords.latitude,
+      longitude: location.coords.longitude,
+      altitude: location.coords.altitude,
+      accuracy: location.coords.accuracy,
+      heading: location.coords.heading,
+      speed: location.coords.speed,
+      timestamp: location.timestamp,
+    };
   }
   async startWatchingLocation(callback) {
     try {
@@ -53,15 +87,7 @@ class LocationService {
             distanceInterval: 1,
           },
           (location) => {
-            this.currentLocation = {
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-              altitude: location.coords.altitude,
-              accuracy: location.coords.accuracy,
-              heading: location.coords.heading,
-              speed: location.coords.speed,
-              timestamp: location.timestamp,
-            };
+            this.currentLocation = this._normalizeLocation(location);
             this.locationUpdateCallbacks.forEach(cb => cb(this.currentLocation));
           }
         );

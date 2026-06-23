@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Dimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, BORDER_RADIUS, SPACING, FONT_SIZES } from '../constants/theme';
 const { width } = Dimensions.get('window');
@@ -11,13 +11,16 @@ const Button = ({
   size = 'medium',
   fullWidth = false,
   icon = null,
-  gradient = false 
+  gradient = false,
+  loading = false,
+  style = null,
 }) => {
   const buttonStyles = [
     styles.button,
     styles[variant],
     fullWidth && styles.fullWidth,
     disabled && styles.disabled,
+    style,
   ];
   const textStyles = [
     styles.text,
@@ -28,7 +31,11 @@ const Button = ({
   const sizeStyle = styles[size];
   const content = (
     <View style={styles.content}>
-      {icon && <View style={styles.icon}>{icon}</View>}
+      {loading ? (
+        <ActivityIndicator size="small" color={COLORS.text} style={styles.icon} />
+      ) : icon ? (
+        <View style={styles.icon}>{icon}</View>
+      ) : null}
       <Text style={textStyles}>{title}</Text>
     </View>
   );
@@ -57,7 +64,7 @@ const Button = ({
     <TouchableOpacity
       style={[...buttonStyles, sizeStyle]}
       onPress={onPress}
-      disabled={disabled}
+      disabled={disabled || loading}
       activeOpacity={0.8}
       accessibilityRole="button"
       accessibilityLabel={title}

@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SENSEI Project — Complete Learning Guide</title>
+  <style>
+    @page { margin: 18mm 15mm; }
+    body {
+      font-family: 'Segoe UI', Calibri, Arial, sans-serif;
+      font-size: 11pt;
+      line-height: 1.55;
+      color: #1a1a2e;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1 { font-size: 22pt; color: #0d7377; border-bottom: 3px solid #00d9ff; padding-bottom: 8px; page-break-after: avoid; }
+    h2 { font-size: 15pt; color: #0d7377; margin-top: 28px; page-break-after: avoid; border-left: 4px solid #00d9ff; padding-left: 10px; }
+    h3 { font-size: 12pt; color: #16213e; margin-top: 18px; page-break-after: avoid; }
+    h4 { font-size: 11pt; color: #333; margin-top: 14px; }
+    p { margin: 8px 0; text-align: justify; }
+    ul, ol { margin: 6px 0 12px 0; padding-left: 22px; }
+    li { margin: 4px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 10pt; page-break-inside: avoid; }
+    th { background: #0d7377; color: #fff; padding: 8px; text-align: left; }
+    td { border: 1px solid #ccc; padding: 7px; vertical-align: top; }
+    tr:nth-child(even) { background: #f4fafa; }
+    code, pre {
+      font-family: Consolas, 'Courier New', monospace;
+      font-size: 9pt;
+      background: #f0f4f8;
+      border-radius: 4px;
+    }
+    code { padding: 1px 5px; }
+    pre { padding: 12px; overflow-x: auto; white-space: pre-wrap; page-break-inside: avoid; }
+    .cover { text-align: center; padding: 60px 20px 40px; page-break-after: always; }
+    .cover h1 { border: none; font-size: 28pt; }
+    .cover .subtitle { font-size: 14pt; color: #555; margin: 16px 0; }
+    .cover .meta { font-size: 11pt; color: #777; margin-top: 40px; }
+    .toc { page-break-after: always; }
+    .toc ul { list-style: none; padding-left: 0; }
+    .toc li { padding: 4px 0; border-bottom: 1px dotted #ccc; }
+    .toc a { color: #0d7377; text-decoration: none; }
+    .box { background: #e8f8f8; border: 1px solid #00d9ff; border-radius: 6px; padding: 12px 16px; margin: 12px 0; page-break-inside: avoid; }
+    .warn { background: #fff8e6; border-color: #f0a500; }
+    .algo { background: #f8f0ff; border: 1px solid #9b59b6; }
+    .flow { font-family: Consolas, monospace; font-size: 9pt; background: #1a1a2e; color: #00d9ff; padding: 14px; border-radius: 6px; page-break-inside: avoid; }
+    .page-break { page-break-before: always; }
+    .module-header { background: #16213e; color: white; padding: 10px 14px; border-radius: 6px 6px 0 0; margin-top: 20px; }
+    .module-body { border: 1px solid #ccc; border-top: none; padding: 14px; border-radius: 0 0 6px 6px; margin-bottom: 16px; page-break-inside: avoid; }
+  </style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>SENSEI</h1>
+  <p class="subtitle">Smart Environmental Navigation System for Enhanced Independence</p>
+  <p class="subtitle">Complete Project Learning Guide</p>
+  <p class="meta">Version 1.0.0 &nbsp;|&nbsp; React Native (Expo) + Node.js/Express + MongoDB<br/>
+  Logics, Algorithms, Technologies &amp; Module-by-Module Architecture</p>
+</div>
+
+<div class="toc">
+  <h2>Table of Contents</h2>
+  <ul>
+    <li>1. Project Purpose &amp; Design Philosophy</li>
+    <li>2. Technology Stack</li>
+    <li>3. System Architecture Overview</li>
+    <li>4. Core Algorithms &amp; Logic</li>
+    <li>5. Application Entry &amp; Navigation Flow</li>
+    <li>6. Mobile App — Module by Module</li>
+    <li>7. Screens — Module by Module</li>
+    <li>8. Components &amp; Utilities</li>
+    <li>9. Backend Server — Module by Module</li>
+    <li>10. Data Flow Diagrams</li>
+    <li>11. Configuration &amp; Deployment</li>
+    <li>12. Testing Strategy</li>
+    <li>13. Learning Roadmap (What to Study)</li>
+  </ul>
+</div>
+
+<h1>1. Project Purpose &amp; Design Philosophy</h1>
+
+<p><strong>SENSEI</strong> is a mobile accessibility application built for visually impaired users. It combines computer vision, GPS navigation, voice control, spatial audio, and emergency safety into one hands-free experience.</p>
+
+<div class="box">
+  <strong>Core design goals:</strong>
+  <ul>
+    <li><strong>Hands-free operation</strong> — Wake word ("Hey Sensei") + 100+ voice command variations</li>
+    <li><strong>Real-world obstacle awareness</strong> — On-device object detection (COCO-SSD) with hazard scoring</li>
+    <li><strong>Ground safety</strong> — Depth grid analysis for stairs, drop-offs, uneven surfaces</li>
+    <li><strong>Navigation</strong> — Outdoor (Google Maps) + indoor (graph/Dijkstra) + pinned locations</li>
+    <li><strong>Hybrid cloud/offline</strong> — Heavy AI can run on-device; OCR and logging use LAN server when available</li>
+    <li><strong>Multi-modal feedback</strong> — TTS, spatial audio, vibration, on-screen AR overlays</li>
+  </ul>
+</div>
+
+<p>The app is formed as a <strong>service-oriented React Native architecture</strong>: each capability (detection, navigation, voice, emergency) lives in a singleton service class. Screens orchestrate services; services rarely depend on UI. The backend stores user data, sessions, and serves ML model weights + server-side OCR.</p>
+
+<h1>2. Technology Stack</h1>
+
+<h3>2.1 Mobile Client</h3>
+<table>
+  <tr><th>Technology</th><th>Role in SENSEI</th></tr>
+  <tr><td>React Native 0.81 + Expo SDK 54</td><td>Cross-platform mobile framework; dev client for native modules</td></tr>
+  <tr><td>React Navigation 6</td><td>Tab + stack navigation (Home, Navigation, AR, Settings)</td></tr>
+  <tr><td>TensorFlow.js + tfjs-react-native</td><td>On-device COCO-SSD object detection (WebGL/CPU backend)</td></tr>
+  <tr><td>@tensorflow-models/coco-ssd</td><td>Pre-trained SSD MobileNet models (80 COCO classes)</td></tr>
+  <tr><td>@vladmandic/face-api</td><td>TinyFaceDetector + FaceExpressionNet for emotion screen</td></tr>
+  <tr><td>expo-camera</td><td>Camera preview + snapshot capture for detection pipeline</td></tr>
+  <tr><td>react-native-vision-camera + vision-camera-object-detector</td><td>Optional real-time ML Kit detection path (dev build only)</td></tr>
+  <tr><td>Three.js + expo-gl + expo-three</td><td>3D AR scene rendering (ARService, ARCanvas)</td></tr>
+  <tr><td>expo-location</td><td>GPS position, watch, haversine distance</td></tr>
+  <tr><td>react-native-maps</td><td>Map display, polylines, markers in NavigationScreen</td></tr>
+  <tr><td>expo-speech</td><td>Text-to-speech output queue with priority</td></tr>
+  <tr><td>expo-speech-recognition</td><td>Continuous speech recognition for voice commands</td></tr>
+  <tr><td>expo-audio + react-native-fs</td><td>Spatial audio playback; WAV cache for mic tones</td></tr>
+  <tr><td>AsyncStorage</td><td>JWT token, settings, indoor buildings, pinned locations, routes</td></tr>
+  <tr><td>expo-sensors (Accelerometer)</td><td>Fall detection in EmergencyService</td></tr>
+  <tr><td>expo-contacts / expo-sms / expo-linking</td><td>Emergency contact import, SMS, WhatsApp location share</td></tr>
+</table>
+
+<h3>2.2 Backend Server</h3>
+<table>
+  <tr><th>Technology</th><th>Role in SENSEI</th></tr>
+  <tr><td>Node.js + Express 4</td><td>REST API on port 3001</td></tr>
+  <tr><td>MongoDB + Mongoose 8</td><td>Users, sessions, detection logs, routes, emergency alerts</td></tr>
+  <tr><td>JWT + bcryptjs</td><td>Authentication (7-day token expiry)</td></tr>
+  <tr><td>Tesseract.js</td><td>Server-side OCR from base64 JPEG images</td></tr>
+  <tr><td>Socket.IO</td><td>Real-time emergency event broadcast</td></tr>
+  <tr><td>express.static</td><td>Serves /models/face-api and /models/coco-ssd for LAN model loading</td></tr>
+</table>
+
+<h1>3. System Architecture Overview</h1>
+
+<div class="flow">
+┌─────────────────────────────────────────────────────────────────┐
+│                    MOBILE APP (React Native)                     │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ │
+│  │ Screens  │→ │ Services │→ │ AsyncStorage / Device APIs     │ │
+│  └──────────┘  └────┬─────┘  └────────────────────────────────┘ │
+│                     │ REST (JWT) + static model fetch             │
+└─────────────────────┼─────────────────────────────────────────────┘
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              SERVER (Express :3001) + MongoDB                     │
+│  /api/auth  /api/ai  /api/navigation  /api/emergency  /models/*  │
+└─────────────────────────────────────────────────────────────────┘
+</div>
+
+<p><strong>Formation pattern:</strong> The project grew from a navigation prototype into a full assistive stack. Each new capability was added as an isolated service with a singleton export, wired through <code>AppInitializer</code> at boot and through screen-specific effects (especially <code>ARScreen</code> for the vision pipeline).</p>
+
+<h1>4. Core Algorithms &amp; Logic</h1>
+
+<h2>4.1 Object Detection Pipeline (COCO-SSD)</h2>
+<div class="module-body algo">
+<p><strong>File:</strong> <code>ObjectDetectionService.js</code></p>
+<p><strong>Model:</strong> COCO-SSD (Single Shot MultiBox Detector + MobileNet backbone). Detects 80 object classes (person, car, chair, etc.).</p>
+
+<h4>Load sequence</h4>
+<ol>
+  <li>GPU compatibility probe (Samsung Exynos → unknown; MediaTek PowerVR → unsafe/CPU-only)</li>
+  <li>TensorFlow backend selection: <code>rn-webgl</code> → <code>webgl</code> → <code>cpu</code>, with matMul + depthwiseConv2d validation</li>
+  <li>Backend result cached in AsyncStorage to skip validation on next cold start</li>
+  <li>Model load order: device RNFS cache → LAN server (if weights verified) → Google CDN</li>
+  <li>Non-blocking warmup inference to compile GPU shaders</li>
+</ol>
+
+<h4>Per-frame detection (<code>detectFromTensor</code>)</h4>
+<ol>
+  <li><strong>Rate limiting</strong> — Target 24 FPS (GPU) or 4 FPS (CPU); skip if previous frame still processing</li>
+  <li><strong>Tensor prep</strong> — Cast to int32 RGB 0–255 as required by coco-ssd</li>
+  <li><strong>model.detect(tensor, maxBoxes, minScore)</strong> — Raw SSD inference</li>
+  <li><strong>Post-filter</strong> — Clamp bbox to image bounds; reject tiny boxes (area thresholds differ for large vs small objects)</li>
+  <li><strong>False-positive class filter</strong> — Food/sports classes require higher confidence (≥0.60)</li>
+  <li><strong>NMS (Non-Max Suppression)</strong> — Per-class greedy NMS in JS (≤8 boxes) or TF async NMS for larger sets. Removes overlapping duplicate boxes.</li>
+  <li><strong>Distance estimation</strong> — Pinhole camera model: <code>distance = (canonicalHeight × focalLength) / bboxHeightPixels</code>. Fallback: <code>6 / sqrt(bboxArea)</code></li>
+  <li><strong>Multi-object tracking</strong> — IoU-based association across frames; exponential smoothing on bbox/score/distance</li>
+  <li><strong>Temporal confirmation</strong> — Detections below bypass threshold (0.55) need 2 consecutive frames (<code>minConfirmFrames</code>)</li>
+  <li><strong>Hazard enrichment</strong> — HazardScoringService assigns critical/high/medium/low</li>
+</ol>
+
+<h4>Key formulas</h4>
+<pre>focalLength = (frameHeight / 2) / tan(vFOV / 2)
+distance    = canonicalHeight × focalLength / bboxHeightPixels
+IoU(A,B)      = intersectionArea / unionArea
+smoothedBox   = α × newBox + (1-α) × oldBox   (α = smoothingFactor, default 0.72)</pre>
+</div>
+
+<h2>4.2 Hazard Scoring</h2>
+<div class="module-body algo">
+<p><strong>File:</strong> <code>HazardScoringService.js</code></p>
+<pre>score = baseClassWeight + distanceFactor + sizeFactor + positionFactor
+
+baseClassWeight: car/bus/truck=5, person/dog=3, chair=1, etc.
+distanceFactor:  6 - min(5.9, log2(1 + 8/dist) × 2)   → closer = higher
+sizeFactor:      min(5, log10(1 + area×100) × 4)
+positionFactor:  center=3, left/right=2
+
+Levels: score ≥8 → critical, ≥6 → high, ≥4 → medium, else low</pre>
+</div>
+
+<h2>4.3 Depth Estimation (7×5 Ground Grid)</h2>
+<div class="module-body algo">
+<p><strong>File:</strong> <code>DepthEstimationService.js</code></p>
+<p>On-device depth without MiDaS neural network — uses geometry + detection fusion.</p>
+<ul>
+  <li>Camera modeled at ~1 m height; horizon at normalized Y = 0.42</li>
+  <li>Ground distance from bottom-of-frame: <code>depth ≈ GROUND_K / (1 - normY)</code> where GROUND_K = 0.55</li>
+  <li>7 columns × 5 rows grid maps walkable zones: critical (&lt;0.5 m), near (&lt;1.2 m), mid (&lt;3 m)</li>
+  <li>COCO object heights (person=1.7 m, car=1.45 m) refine per-cell depth via bbox height</li>
+  <li><strong>Stair detection from brightness:</strong> ARScreen extracts per-row mean brightness from bottom 60% of frame; horizontal edges (step risers) detected when row-to-row brightness jumps exceed threshold</li>
+  <li>Drop-off detection when depth delta between rows exceeds DROP_THRESHOLD (0.45 m)</li>
+</ul>
+</div>
+
+<h2>4.4 Foot Placement &amp; Safety Guidance</h2>
+<div class="module-body algo">
+<p><strong>File:</strong> <code>FootPlacementService.js</code></p>
+<ul>
+  <li><strong>Grid-based guidance (primary):</strong> Scans 7×5 depth grid columns [left|center|right]; finds safest walk direction</li>
+  <li><strong>Object-based fallback:</strong> Uses COCO detections in lower half of frame as ground obstacles</li>
+  <li><strong>Stair temporal filter:</strong> Requires 3 consecutive frames before announcing stairs (reduces texture false positives)</li>
+  <li><strong>Cooldown deduplication:</strong> Separate TTS cooldowns for guidance (2.5 s), drops (2.5 s), stairs (3 s), surface (4 s)</li>
+  <li><strong>Outputs:</strong> Vibration patterns by hazard level + spatial audio beeps + TTS messages</li>
+</ul>
+</div>
+
+<h2>4.5 Voice Command Recognition</h2>
+<div class="module-body algo">
+<p><strong>File:</strong> <code>VoiceCommandService.js</code> (~1,900 lines)</p>
+<ul>
+  <li><strong>Wake word:</strong> Continuous listening via expo-speech-recognition; "Hey Sensei" activates command mode</li>
+  <li><strong>Fuzzy matching:</strong> Levenshtein distance + similarity score (0–1); keyword containment with 0.8 word similarity threshold</li>
+  <li><strong>100+ command variations</strong> mapped to actions: navigation, AR start/stop, OCR, emergency, indoor nav, pinned locations, emotion detection</li>
+  <li><strong>Command categories:</strong> app navigation, AR control, object queries, GPS navigation, indoor navigation, emergency, settings</li>
+  <li>Commands logged to server <code>POST /api/ai/voice-command</code> when authenticated</li>
+</ul>
+<pre>Levenshtein(a,b): dynamic programming edit distance
+similarity(a,b) = 1 - distance / max(len(a), len(b))</pre>
+</div>
+
+<h2>4.6 Outdoor Navigation</h2>
+<div class="module-body algo">
+<p><strong>Files:</strong> <code>GoogleMapsService.js</code>, <code>NavigationService.js</code></p>
+<ul>
+  <li><strong>Route source:</strong> Google Directions API (walking mode) with polyline decoding</li>
+  <li><strong>Fallback geocoding:</strong> Nominatim/OpenStreetMap when Google API key missing</li>
+  <li><strong>Step tracking:</strong> Compare user GPS to next maneuver point; advance step when within threshold (10 m)</li>
+  <li><strong>Guidance:</strong> TTS speaks turn instructions; SpatialAudioService plays directional cues</li>
+  <li><strong>Haversine formula</strong> for distance between GPS coordinates</li>
+  <li><strong>Bearing calculation</strong> for heading-relative turn instructions</li>
+</ul>
+</div>
+
+<h2>4.7 Indoor Navigation (Graph + Dijkstra)</h2>
+<div class="module-body algo">
+<p><strong>File:</strong> <code>IndoorNavigationService.js</code></p>
+<p>Buildings modeled as graphs (not pixel grids) — voice-definable landmarks.</p>
+<pre>Building → floors → { nodes, edges }
+Node:  id, name, type, lat/lng, floor, connectsFloors (stairs/elevator)
+Edge:  from, to, distanceM, heading°, instruction text
+
+Pathfinding: Dijkstra's algorithm on weighted edges (distanceM)
+Multi-floor: routes traverse staircase/elevator nodes
+Localization: nearest node to GPS OR voice "I am at [landmark]"
+Storage: AsyncStorage key @sensei_indoor_buildings</pre>
+</div>
+
+<h2>4.8 AR Screen Capture Pipeline</h2>
+<div class="module-body algo">
+<p><strong>File:</strong> <code>ARScreen.js</code></p>
+<ol>
+  <li><code>takePictureAsync</code> snapshot (quality 0.55, no base64 in capture)</li>
+  <li><code>ImageManipulator</code> native resize to 320 px width + EXIF orientation fix</li>
+  <li><code>decodeJpeg</code> (tfjs-react-native) → RGB tensor</li>
+  <li>Optional <code>resizeBilinear</code> if dimensions off by &gt;2 px</li>
+  <li><code>ObjectDetectionService.detectFromTensor</code></li>
+  <li><code>extractImageEdgeSignal</code> — row brightness means for stair detection</li>
+  <li>Depth + FootPlacement every other frame (performance optimization)</li>
+  <li><strong>Pipelining:</strong> Capture continues while inference runs; latest-frame-wins via <code>pendingPhotoRef</code></li>
+</ol>
+</div>
+
+<h2>4.9 Emotion Detection</h2>
+<div class="module-body algo">
+<p><strong>File:</strong> <code>EmotionDetectionService.js</code></p>
+<ul>
+  <li>TinyFaceDetector locates face in JPEG (base64 from front camera)</li>
+  <li>FaceExpressionNet classifies: happy, sad, angry, fearful, disgusted, surprised, neutral</li>
+  <li>Models loaded from LAN <code>/models/face-api/</code> via fetch + TF.js</li>
+  <li>face-api environment manually configured for React Native (no DOM)</li>
+</ul>
+</div>
+
+<h2>4.10 Emergency &amp; Fall Detection</h2>
+<div class="module-body algo">
+<p><strong>File:</strong> <code>EmergencyService.js</code></p>
+<ul>
+  <li>Accelerometer magnitude spike detection for falls</li>
+  <li>Manual SOS triggers alert to server + contacts via SMS/WhatsApp</li>
+  <li>Live location broadcast during emergency</li>
+  <li>Socket.IO on server for real-time alert propagation</li>
+</ul>
+</div>
+
+<h1 class="page-break">5. Application Entry &amp; Navigation Flow</h1>
+
+<div class="flow">
+index.js → registerRootComponent(App)
+App.js:
+  ├─ ApiService.initialize() → restore JWT from AsyncStorage
+  ├─ [no token] → AuthScreen (login/register)
+  └─ [authenticated] → NavigationContainer
+       ├─ RootStack
+       │    ├─ MainTabs (Home | Navigation | AR | Settings)
+       │    └─ EmotionDetection (modal)
+       ├─ VoiceCommandService.startContinuousListening()
+       └─ Floating mic status indicator
+
+AppInitializer (called after auth):
+  ├─ ObjectDetectionService.loadModel() [parallel preload]
+  ├─ OCRService / EmotionDetection / DepthEstimation init
+  ├─ OfflineModeService.pingServer() → setUseCloud(true/false)
+  ├─ LocationService.requestPermissions()
+  └─ SpatialAudioService + BluetoothService init
+</div>
+
+<h1>6. Mobile App — Services Module by Module</h1>
+
+<div class="module-header">ApiService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> Central HTTP gateway for all backend communication.</p>
+<p><strong>Logic:</strong> Stores JWT in AsyncStorage; attaches Bearer header; clears token on 401. Methods for auth, profile, emergency contacts, navigation sessions, OCR, logs, offline maps.</p>
+</div>
+
+<div class="module-header">AppInitializer.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> Single boot orchestrator called once after login.</p>
+<p><strong>Logic:</strong> Parallel model preload + sequential service init; announces online/offline via TTS based on server ping.</p>
+</div>
+
+<div class="module-header">ObjectDetectionService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> Core vision engine — largest and most complex service (~1,300 lines).</p>
+<p><strong>Logic:</strong> Full COCO-SSD pipeline described in Section 4.1. Integrates HazardScoring, voice announcements with per-class cooldowns, server session logging.</p>
+</div>
+
+<div class="module-header">DepthEstimationService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> Lightweight on-device alternative to server MiDaS endpoint.</p>
+<p><strong>Logic:</strong> 7×5 grid depth map from perspective geometry + COCO heights + brightness edge analysis. See Section 4.3.</p>
+</div>
+
+<div class="module-header">FootPlacementService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> Safety layer on top of depth + detections for blind navigation.</p>
+<p><strong>Logic:</strong> Grid/object guidance, stair/drop/surface warnings with temporal filters. See Section 4.4.</p>
+</div>
+
+<div class="module-header">HazardScoringService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> Pure scoring function — no side effects, easy to test.</p>
+<p><strong>Logic:</strong> Weighted sum of class, distance, size, position → 0–10 score → level. See Section 4.2.</p>
+</div>
+
+<div class="module-header">VoiceCommandService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> App-wide voice OS — grew to 100+ command patterns.</p>
+<p><strong>Logic:</strong> Wake word → fuzzy match → action dispatch → navigation ref / service callbacks. See Section 4.5.</p>
+</div>
+
+<div class="module-header">GoogleMapsService.js + NavigationService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> Split between API calls (GoogleMaps) and session orchestration (Navigation).</p>
+<p><strong>Logic:</strong> Route fetch, polyline decode, step tracking, TTS guidance. See Section 4.6.</p>
+</div>
+
+<div class="module-header">IndoorNavigationService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> Voice-first indoor alternative when GPS is too coarse.</p>
+<p><strong>Logic:</strong> Graph storage, Dijkstra pathfinding, landmark CRUD via voice. See Section 4.7.</p>
+</div>
+
+<div class="module-header">EmotionDetectionService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> On-device face-api wrapper to avoid server round-trip for emotions.</p>
+<p><strong>Logic:</strong> TF.js init → load TinyFaceDetector + FaceExpressionNet → detectFromBase64. See Section 4.9.</p>
+</div>
+
+<div class="module-header">OCRService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> Server-dependent text reading (signs, labels).</p>
+<p><strong>Logic:</strong> Health check → POST base64 JPEG to <code>/api/ai/ocr</code> → Tesseract.js on server → confidence-filtered text.</p>
+</div>
+
+<div class="module-header">TextToSpeechService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> Central speech output queue to prevent overlapping announcements.</p>
+<p><strong>Logic:</strong> Priority queue (critical interrupts normal); deduplication; Android callback watchdog.</p>
+</div>
+
+<div class="module-header">SpatialAudioService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> 3D audio feedback for obstacle direction and navigation.</p>
+<p><strong>Logic:</strong> Pan/volume by angle and distance; directional beeps for hazards.</p>
+</div>
+
+<div class="module-header">EmergencyService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> Safety-critical module with local + server sync.</p>
+<p><strong>Logic:</strong> Fall detection, SOS, contact notification, location sharing. See Section 4.10.</p>
+</div>
+
+<div class="module-header">OfflineModeService.js</div>
+<div class="module-body">
+<p><strong>Formed as:</strong> Connectivity awareness layer.</p>
+<p><strong>Logic:</strong> 5 s health ping; toggles cloud mode; caches routes for offline replay; syncs pending data when back online.</p>
+</div>
+
+<div class="module-header">Other Services (summary)</div>
+<div class="module-body">
+<table>
+  <tr><th>Service</th><th>Purpose</th></tr>
+  <tr><td>ARService.js</td><td>Three.js scene, camera, lighting, 3D anchor management</td></tr>
+  <tr><td>ARNavigationService.js</td><td>In-memory AR navigation anchor store + raycast stub</td></tr>
+  <tr><td>LocationService.js</td><td>Expo Location wrapper: permissions, watch, haversine, bearing</td></tr>
+  <tr><td>SettingsService.js</td><td>Persisted detection/navigation prefs with pub/sub listeners</td></tr>
+  <tr><td>PinnedLocationService.js</td><td>Named GPS/indoor pins with fuzzy synonym matching</td></tr>
+  <tr><td>RouteMemoryService.js</td><td>Record/replay routes, recent searches, frequent destinations</td></tr>
+  <tr><td>BluetoothService.js</td><td>BLE scan/connect (mock devices; TODO real BLE)</td></tr>
+  <tr><td>WearablesService.js</td><td>Haptic patterns via Bluetooth layer</td></tr>
+  <tr><td>MicToneService.js</td><td>660/440 Hz WAV beeps for mic on/off feedback</td></tr>
+</table>
+</div>
+
+<h1 class="page-break">7. Screens — Module by Module</h1>
+
+<table>
+  <tr><th>Screen</th><th>Lines</th><th>Role &amp; How It Was Formed</th></tr>
+  <tr>
+    <td><strong>AuthScreen.js</strong></td><td>~200</td>
+    <td>Gate before app access. Email/password via ApiService. TTS confirms login. Social auth placeholders for future.</td>
+  </tr>
+  <tr>
+    <td><strong>HomeScreen.js</strong></td><td>~300</td>
+    <td>Dashboard hub: quick actions (Navigate, AR, Detection), GPS coords, nearby objects summary, system status cards.</td>
+  </tr>
+  <tr>
+    <td><strong>NavigationScreen.js</strong></td><td>~1,200</td>
+    <td>Largest screen. MapView, destination search, indoor nav UI, pinned locations, route memory, polyline rendering, turn panel, voice integration. Grew iteratively as navigation features were added.</td>
+  </tr>
+  <tr>
+    <td><strong>ARScreen.js</strong></td><td>~1,430</td>
+    <td>Core vision screen. Camera + detection overlays + depth/foot pipeline + OCR + spatial audio. Two camera paths: expo-camera snapshots (default) or Vision Camera ML Kit (dev build). Formed by merging detection, depth, and foot services into one orchestrator.</td>
+  </tr>
+  <tr>
+    <td><strong>SettingsScreen.js</strong></td><td>~400</td>
+    <td>Audio/TTS/haptic toggles, detection precision, Bluetooth, fall detection, emotion test, logout, offline status.</td>
+  </tr>
+  <tr>
+    <td><strong>EmergencyContactsScreen.js</strong></td><td>~250</td>
+    <td>CRUD emergency contacts; syncs ApiService + EmergencyService; import from phone contacts.</td>
+  </tr>
+  <tr>
+    <td><strong>EmotionDetectionScreen.js</strong></td><td>~200</td>
+    <td>Modal front-camera emotion scan every 3 s; TTS announces dominant expression.</td>
+  </tr>
+</table>
+
+<h1>8. Components &amp; Utilities</h1>
+
+<table>
+  <tr><th>File</th><th>Purpose</th></tr>
+  <tr><td>RealTimeCameraView.js</td><td>Vision Camera + ML Kit frame processor; maps detections to app format; 15 FPS</td></tr>
+  <tr><td>ARCanvas.js</td><td>Expo-GL + Three.js wrapper for 3D AR overlays</td></tr>
+  <tr><td>Button.js / Card.js</td><td>Reusable themed UI components</td></tr>
+  <tr><td>LoadingScreen.js / ErrorBoundary.js</td><td>Loading states and crash recovery</td></tr>
+  <tr><td>faceApiPolyfill.js</td><td>window/document polyfill so face-api runs in Hermes RN</td></tr>
+  <tr><td>helpers.js / validators.js</td><td>formatDistance, debounce, coordinate validation</td></tr>
+  <tr><td>constants/config.js</td><td>API_BASE_URL, Google Maps key, detection/navigation constants</td></tr>
+  <tr><td>constants/theme.js</td><td>Dark theme colors, spacing, typography</td></tr>
+</table>
+
+<h1 class="page-break">9. Backend Server — Module by Module</h1>
+
+<h3>9.1 Entry — server/src/index.js</h3>
+<p>Connects MongoDB, mounts routers under <code>/api/*</code>, serves static ML models, exposes <code>GET /api/health</code>, initializes Socket.IO.</p>
+
+<h3>9.2 Routes</h3>
+<table>
+  <tr><th>Router</th><th>Key Endpoints</th><th>Logic</th></tr>
+  <tr><td>auth.js</td><td>POST /register, /login</td><td>bcrypt hash, JWT sign (7 days)</td></tr>
+  <tr><td>users.js</td><td>GET/PUT /me, /preferences, emergency-contacts CRUD</td><td>requireAuth middleware on all routes</td></tr>
+  <tr><td>ai.js</td><td>POST /ocr, /detection/*, /voice-command, /emotion, /depth</td><td>Tesseract OCR; session logging for detections; voice audit log</td></tr>
+  <tr><td>navigation.js</td><td>POST /route, GET /status, POST /stop, /routes, /history</td><td>Navigation session + route persistence</td></tr>
+  <tr><td>emergency.js</td><td>POST /alert, GET /alerts, PUT /:id/resolve</td><td>SOS alert storage + Socket.IO emit</td></tr>
+  <tr><td>offline-maps.js</td><td>CRUD /offline-maps</td><td>Offline map region metadata</td></tr>
+  <tr><td>logs.js</td><td>GET/POST /logs, DELETE /clear</td><td>System event logging</td></tr>
+</table>
+
+<h3>9.3 Database Models (Mongoose)</h3>
+<p>User, UserProfile, UserPreferences, EmergencyContact, EmergencyAlert, NavigationSession, Route, DetectionSession, DetectedObject, VoiceCommand, OCRSession, SavedLocation, WearableDevice, OfflineMap, SystemLog — each maps to a MongoDB collection with schema validation.</p>
+
+<h3>9.4 Static Model Hosting</h3>
+<p>Run <code>node server/scripts/download-coco-ssd.js</code> once to populate weight shards. Server serves:</p>
+<ul>
+  <li><code>/models/coco-ssd/ssdlite_mobilenet_v2/</code> — ~18 MB SSDLite (primary)</li>
+  <li><code>/models/face-api/</code> — TinyFaceDetector + FaceExpressionNet weights</li>
+</ul>
+
+<h1>10. Data Flow Diagrams</h1>
+
+<h3>10.1 AR Detection Frame Flow</h3>
+<div class="flow">
+Camera snapshot
+  → ImageManipulator (320px JPEG)
+  → decodeJpeg → TF tensor
+  → ObjectDetectionService.detectFromTensor
+       → COCO-SSD → NMS → tracking → hazard score
+  → extractImageEdgeSignal (brightness rows)
+  → DepthEstimationService.processFrame
+  → FootPlacementService.processFrame
+  → UI overlays + TTS + SpatialAudio + server log
+</div>
+
+<h3>10.2 Voice Command Flow</h3>
+<div class="flow">
+Microphone → expo-speech-recognition
+  → "Hey Sensei" wake word detected
+  → Command mode (listening)
+  → normalizeInput + fuzzy match COMMAND_DEFINITIONS
+  → dispatch action (navigate / start AR / SOS / read text / ...)
+  → TextToSpeechService feedback
+</div>
+
+<h3>10.3 Navigation Flow</h3>
+<div class="flow">
+User: "Navigate to [destination]"
+  → VoiceCommandService → PinnedLocationService fuzzy lookup
+  → GoogleMapsService.getDirections(origin, dest)
+  → NavigationService.startNavigation(route)
+  → LocationService.watchPosition → step advance
+  → TTS turn instructions + SpatialAudio cues
+  → Optional: log session to server
+</div>
+
+<h1>11. Configuration &amp; Deployment</h1>
+
+<table>
+  <tr><th>File</th><th>Key Settings</th></tr>
+  <tr><td>src/constants/config.js</td><td>API_BASE_URL (LAN IP:3001), GOOGLE_MAPS_API_KEY</td></tr>
+  <tr><td>app.json</td><td>Camera/mic/location permissions; vision-camera plugin</td></tr>
+  <tr><td>eas.json</td><td>EAS build profiles (development, preview, production)</td></tr>
+  <tr><td>metro.config.js</td><td>TF.js + face-api transform allowlist</td></tr>
+  <tr><td>server/.env</td><td>MONGODB_URI, JWT_SECRET, PORT, GOOGLE_MAPS_API_KEY</td></tr>
+</table>
+
+<div class="box warn">
+<strong>Build requirements for full features:</strong>
+<ul>
+  <li>Object detection: works in Expo dev client after <code>npx expo run:android</code></li>
+  <li>Voice commands: requires native rebuild for expo-speech-recognition</li>
+  <li>Real-time Vision Camera: requires dev build (not Expo Go)</li>
+  <li>Server: MongoDB running + <code>node server/scripts/download-coco-ssd.js</code> + <code>npm start</code> in server/</li>
+</ul>
+</div>
+
+<h1>12. Testing Strategy</h1>
+<ul>
+  <li><strong>Client Jest tests</strong> (__tests__/): ObjectDetection, Navigation, UserManagement, IntegratedModules</li>
+  <li><strong>Server tests</strong> (server/tests/api.test.js): Auth register/login via supertest</li>
+  <li><strong>CI</strong> (.github/workflows/ci.yml): Server tests on push/PR</li>
+  <li><strong>Coverage target:</strong> 70% (jest.config.js)</li>
+</ul>
+
+<h1 class="page-break">13. Learning Roadmap — What to Study</h1>
+
+<table>
+  <tr><th>Topic</th><th>Why for SENSEI</th><th>Start Here in Codebase</th></tr>
+  <tr><td>React Native + Expo</td><td>App structure, navigation, native modules</td><td>App.js, ARScreen.js</td></tr>
+  <tr><td>TensorFlow.js</td><td>On-device ML inference</td><td>ObjectDetectionService.js</td></tr>
+  <tr><td>Computer Vision basics</td><td>SSD, NMS, bounding boxes, IoU</td><td>ObjectDetectionService detectFromTensor</td></tr>
+  <tr><td>Pinhole camera model</td><td>Distance from bbox height</td><td>_estimateDistance()</td></tr>
+  <tr><td>Graph algorithms</td><td>Indoor navigation</td><td>IndoorNavigationService Dijkstra</td></tr>
+  <tr><td>Google Maps API</td><td>Outdoor routing</td><td>GoogleMapsService.js</td></tr>
+  <tr><td>Speech recognition</td><td>Voice UX</td><td>VoiceCommandService.js</td></tr>
+  <tr><td>Levenshtein / fuzzy matching</td><td>Robust voice parsing</td><td>VoiceCommandService utilities</td></tr>
+  <tr><td>Node.js + Express + MongoDB</td><td>Backend API</td><td>server/src/</td></tr>
+  <tr><td>JWT authentication</td><td>Secure API access</td><td>server/src/middleware/auth.js</td></tr>
+  <tr><td>Three.js / WebGL</td><td>AR 3D rendering</td><td>ARService.js, ARCanvas.js</td></tr>
+  <tr><td>Accessibility UX</td><td>TTS, spatial audio, haptics</td><td>TextToSpeechService, SpatialAudioService</td></tr>
+</table>
+
+<div class="box">
+  <strong>Recommended reading order for new developers:</strong>
+  <ol>
+    <li>README.md + QUICK_START_GUIDE.md</li>
+    <li>App.js → AppInitializer.js → one screen (HomeScreen)</li>
+    <li>ObjectDetectionService.js (core algorithm)</li>
+    <li>ARScreen.js (how services connect)</li>
+    <li>VoiceCommandService.js (voice OS)</li>
+    <li>NavigationScreen.js + GoogleMapsService.js</li>
+    <li>server/src/index.js + ai.js routes</li>
+    <li>docs/ folder (API.md, AR_INTEGRATION.md, TESTING.md)</li>
+  </ol>
+</div>
+
+<p style="margin-top:40px; text-align:center; color:#777; font-size:10pt;">
+  SENSEI Project Guide — Generated for learning and onboarding.<br/>
+  Repository: sensei-app v1.0.0
+</p>
+
+</body>
+</html>

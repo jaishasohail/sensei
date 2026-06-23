@@ -4,6 +4,8 @@ import LocationService from './LocationService';
 import MicToneService from './MicToneService';
 import { API_BASE_URL } from '../constants/config';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import PinnedLocationService from './PinnedLocationService';
+import IndoorNavigationService from './IndoorNavigationService';
 
 // Lazy-load the native speech recognition module.
 // requireNativeModule("ExpoSpeechRecognition") throws if the app hasn't been
@@ -243,9 +245,18 @@ const COMMAND_DEFINITIONS = [
     action: 'navigateTo',
     type: 'routing',
     variations: [
-      'navigate to', 'take me to', 'directions to', 'route to',
-      'how do i get to', 'find route to', 'guide me to', 'get me to',
-      'start navigation to', 'i want to go to', 'bring me to', 'lead me to',
+      // ── "me/us" variants must come BEFORE the bare verb forms ─────────────
+      // "navigate me to X" — the most common phrasing; listed first so
+      // findBestMatch's startsWith path extracts "X" cleanly without "me".
+      'navigate me to', 'navigate us to',
+      'take me to', 'take us to',
+      'guide me to', 'guide us to',
+      'get me to', 'get us to',
+      'bring me to', 'lead me to',
+      // ── bare verb forms ──────────────────────────────────────────────────
+      'navigate to', 'directions to', 'route to',
+      'how do i get to', 'find route to',
+      'start navigation to', 'i want to go to',
     ],
     keywords: [['navigate', 'to'], ['direction', 'to'], ['route', 'to'], ['guide', 'to']],
     response: 'Starting navigation',
@@ -367,7 +378,120 @@ const COMMAND_DEFINITIONS = [
     ],
     keywords: [['stop', 'live', 'location'], ['stop', 'sharing', 'location'], ['stop', 'tracking']],
     response: 'Stopping live location sharing'
-  }
+  },
+
+  // ==================== PINNED LOCATIONS ====================
+  {
+    action: 'pinLocation',
+    type: 'memory',
+    variations: [
+      'pin my location', 'pin this location', 'save this location', 'save my location',
+      'mark this location', 'mark my location', 'bookmark this place', 'save this place',
+      'remember this place', 'remember this location', 'drop a pin', 'drop pin here',
+      'add a pin', 'tag this location', 'label this location',
+    ],
+    keywords: [['pin', 'location'], ['save', 'location'], ['mark', 'location'], ['drop', 'pin']],
+    response: 'Pinning your location',
+  },
+  {
+    action: 'listPins',
+    type: 'memory',
+    variations: [
+      'show my pins', 'list my pins', 'show saved locations', 'what did i pin',
+      'show my saved places', 'list saved places', 'my pinned locations',
+    ],
+    keywords: [['show', 'pins'], ['list', 'pins'], ['saved', 'locations']],
+    response: 'Here are your saved locations',
+  },
+  {
+    action: 'deletePin',
+    type: 'memory',
+    variations: [
+      'delete pin', 'remove pin', 'delete saved location', 'remove saved location',
+      'forget this place', 'unpin location', 'delete this pin',
+    ],
+    keywords: [['delete', 'pin'], ['remove', 'pin'], ['unpin']],
+    response: 'Deleting pin',
+    extractDestination: true,
+  },
+
+  // ==================== INDOOR NAVIGATION ====================
+  {
+    action: 'startMappingBuilding',
+    type: 'indoor',
+    variations: [
+      'start mapping building', 'map this building', 'start indoor mapping',
+      'begin mapping', 'create building map', 'map building', 'start building map',
+      'set up indoor navigation', 'configure building', 'start floor plan',
+    ],
+    keywords: [['start', 'mapping'], ['map', 'building'], ['indoor', 'mapping'], ['floor', 'plan']],
+    response: 'Starting building map',
+    extractDestination: true,
+  },
+  {
+    action: 'markLandmark',
+    type: 'indoor',
+    variations: [
+      'mark staircase', 'mark door', 'mark elevator', 'mark room',
+      'mark this as', 'mark entrance', 'mark exit', 'mark corridor',
+      'add landmark', 'mark landmark', 'mark toilet', 'mark bathroom',
+      'mark kitchen', 'mark office', 'tag this as',
+    ],
+    keywords: [['mark'], ['landmark'], ['tag', 'this']],
+    response: 'Marking landmark',
+    extractDestination: true,
+  },
+  {
+    action: 'finishMapping',
+    type: 'indoor',
+    variations: [
+      'finish mapping', 'done mapping', 'stop mapping', 'save building map',
+      'complete building map', 'finish floor plan', 'end mapping',
+    ],
+    keywords: [['finish', 'mapping'], ['done', 'mapping'], ['save', 'building']],
+    response: 'Saving building map',
+  },
+  {
+    action: 'navigateIndoor',
+    type: 'indoor',
+    variations: [
+      'navigate inside to', 'go inside to', 'find inside', 'take me inside to',
+      'indoor navigate to', 'walk me to', 'guide me inside to',
+    ],
+    keywords: [['navigate', 'inside'], ['indoor', 'navigate'], ['walk', 'me', 'to']],
+    response: 'Starting indoor navigation',
+    extractDestination: true,
+  },
+  {
+    action: 'enterBuilding',
+    type: 'indoor',
+    variations: [
+      'enter building', 'i am inside', 'i entered the building', 'indoor mode',
+      'switch to indoor', 'i am in the building',
+    ],
+    keywords: [['enter', 'building'], ['indoor', 'mode'], ['inside', 'building']],
+    response: 'Switching to indoor navigation mode',
+  },
+  {
+    action: 'exitBuilding',
+    type: 'indoor',
+    variations: [
+      'exit building', 'i am outside', 'outdoor mode', 'leave building',
+      'switch to outdoor', 'exit indoor mode',
+    ],
+    keywords: [['exit', 'building'], ['outdoor', 'mode'], ['leave', 'building']],
+    response: 'Switching to outdoor navigation',
+  },
+  {
+    action: 'iAmAt',
+    type: 'indoor',
+    variations: [
+      'i am at', 'i am near', 'i am standing at', 'my position is', 'i am by the',
+    ],
+    keywords: [['i', 'am', 'at'], ['position', 'is']],
+    response: 'Got it',
+    extractDestination: true,
+  },
 ];
 
 // ============================================================================
@@ -396,7 +520,27 @@ class VoiceCommandService {
       onSaveRoute: null,
       onReadText: null,
     };
-    
+
+    // ── Direct navigation callback ─────────────────────────────────────────
+    // NavigationScreen registers this on mount.  Calling it triggers
+    // triggerSearch() directly inside the screen, completely bypassing
+    // React Navigation params (which are ignored when the tab is already
+    // focused — the tab router treats a navigate() to the active tab as a
+    // "tab press", not a params update).
+    this._navDirectCb = null;
+
+    // ── Multi-turn conversation state ────────────────────────────────────────
+    // When the system asks the user a follow-up question (e.g. "What do you
+    // want to save this location as?"), the NEXT speech input is treated as
+    // the answer, not a new command.  The wake-word gate is also bypassed so
+    // the user doesn't have to say "Hey Sensei" twice.
+    //
+    // Shape: { type: string, data: any } | null
+    //   'awaitPinName'      → data: { latitude, longitude }
+    //   'awaitBuildingName' → data: { latitude, longitude }
+    //   'awaitLandmarkName' → data: { nodeType, latitude, longitude }
+    this._pendingQuestion = null;
+
     // Minimum confidence threshold for command matching
     this.minConfidence = 0.65;
 
@@ -458,6 +602,22 @@ class VoiceCommandService {
    */
   setCallbacks(callbacks) {
     this._callbacks = { ...this._callbacks, ...callbacks };
+  }
+
+  /**
+   * Register a direct navigation callback from NavigationScreen.
+   *
+   * When set, _startNavigation() calls this function directly with
+   * (destination, autoNavigate) instead of relying on React Navigation
+   * route.params.  This is required because React Navigation's bottom tab
+   * router silently ignores params when navigate() targets an already-focused
+   * tab — it treats the call as a "tab press" (reset) rather than a params
+   * update, so route.params never changes and no useEffect fires.
+   *
+   * NavigationScreen calls setNavCallback on mount and passes null on unmount.
+   */
+  setNavCallback(fn) {
+    this._navDirectCb = typeof fn === 'function' ? fn : null;
   }
 
   /**
@@ -694,6 +854,30 @@ class VoiceCommandService {
       case 'showHelp':
         return await this._showHelp();
 
+      // ==================== PINNED LOCATIONS ====================
+      case 'pinLocation':
+        return await this._pinLocation();
+      case 'listPins':
+        return await this._listPins();
+      case 'deletePin':
+        return await this._deletePin(param);
+
+      // ==================== INDOOR NAVIGATION ====================
+      case 'startMappingBuilding':
+        return await this._startMappingBuilding(param);
+      case 'markLandmark':
+        return await this._markLandmark(param);
+      case 'finishMapping':
+        return await this._finishMapping();
+      case 'navigateIndoor':
+        return await this._navigateIndoor(param);
+      case 'enterBuilding':
+        return await this._enterBuilding();
+      case 'exitBuilding':
+        return await this._exitBuilding();
+      case 'iAmAt':
+        return await this._selfLocalise(param);
+
       default:
         return { executed: false, reason: 'Unknown action' };
     }
@@ -828,6 +1012,17 @@ class VoiceCommandService {
   }
 
   async _startNavigation(destination, context, autoNavigate = true) {
+    // ── Sanitize extracted destination ─────────────────────────────────────
+    // When the keyword-match path in findBestMatch() fires (e.g. for a phrase
+    // like "navigate me to X" that doesn't exactly match a variation), the
+    // non-keyword words are joined as the param.  Personal pronouns ("me",
+    // "us") are never part of a place name and must be stripped so the
+    // geocoder receives a clean query like "COMSATS university lahore"
+    // instead of "me COMSATS university lahore".
+    if (destination) {
+      destination = destination.replace(/^(me|us)\s+/i, '').trim();
+    }
+
     if (!destination) {
       await TextToSpeechService.speak(
         autoNavigate ? 'Please specify a destination' : 'Where would you like to search?'
@@ -835,6 +1030,66 @@ class VoiceCommandService {
       return { navigating: false, reason: 'No destination' };
     }
 
+    // ── Check pinned locations FIRST ─────────────────────────────────────────
+    // If the user says "take me to the washroom" and "washroom" is a saved
+    // pin, navigate directly to the stored coordinates without any geocoding.
+    // This works both for outdoor pins and indoor landmarks.
+    try {
+      await PinnedLocationService.initialize();
+      const pin = await PinnedLocationService.findPin(destination);
+      if (pin) {
+        console.log(`VoiceCommandService: found pin "${pin.displayName}" for query "${destination}"`);
+        await PinnedLocationService.recordUsage(pin.id);
+
+        // If the pin is an indoor landmark, use indoor navigation
+        if (pin.buildingId) {
+          await IndoorNavigationService.initialize();
+          await IndoorNavigationService.setActiveBuilding(pin.buildingId, pin.floor ?? 0);
+          const result = await IndoorNavigationService.navigateTo(pin.displayName);
+          if (result?.steps?.length > 0) {
+            await TextToSpeechService.speak(
+              `Indoor navigation to ${pin.displayName}. ${result.steps[0].instruction}`
+            );
+            await this._navigateToScreen('Navigation', {});
+            if (this._navDirectCb) {
+              this._navDirectCb(`[INDOOR] ${pin.displayName}`, false, {
+                indoorSteps: result.steps,
+                indoorDest:  result.destination,
+              });
+            }
+            return { navigating: true, pin, indoor: true };
+          }
+        }
+
+        // Outdoor pin — pass coordinates directly to NavigationScreen
+        await TextToSpeechService.speak(`Navigating to your saved location: ${pin.displayName}`);
+        await this._navigateToScreen('Navigation', {});
+        if (this._navDirectCb) {
+          this._navDirectCb(pin.displayName, true, {
+            pinnedDest: {
+              name:      pin.displayName,
+              latitude:  pin.latitude,
+              longitude: pin.longitude,
+              address:   pin.address ?? '',
+            },
+          });
+        } else {
+          setTimeout(() => {
+            this._navigationRef?.current?.navigate('Navigation', {
+              destination: pin.displayName,
+              autoNavigate: true,
+              pinnedLat: pin.latitude,
+              pinnedLng: pin.longitude,
+            });
+          }, 200);
+        }
+        return { navigating: true, pin };
+      }
+    } catch (pinErr) {
+      console.warn('VoiceCommandService: pinned location lookup failed:', pinErr.message);
+    }
+
+    // ── No pin found — fall back to geocoder search ───────────────────────────
     if (autoNavigate) {
       await TextToSpeechService.speak(`Navigating to ${destination}`);
     } else {
@@ -845,8 +1100,22 @@ class VoiceCommandService {
       this._callbacks.onNavigate(destination);
     }
 
-    // Navigate to Navigation screen, passing destination + mode flag
-    await this._navigateToScreen('Navigation', { destination, autoNavigate });
+    // ── Switch to the Navigation tab ──────────────────────────────────────
+    await this._navigateToScreen('Navigation', {});
+
+    // ── Trigger search directly ───────────────────────────────────────────
+    if (this._navDirectCb) {
+      this._navDirectCb(destination, autoNavigate);
+    } else {
+      setTimeout(() => {
+        try {
+          this._navigationRef?.current?.navigate('Navigation', {
+            destination,
+            autoNavigate,
+          });
+        } catch (_) {}
+      }, 200);
+    }
 
     return { navigating: autoNavigate, destination };
   }
@@ -885,6 +1154,345 @@ class VoiceCommandService {
       this._callbacks.onSaveRoute();
     }
     return { saved: true };
+  }
+
+  // ── Pinned Locations ───────────────────────────────────────────────────────
+
+  /**
+   * Step 1 of 2 for pinning a location.
+   * Gets GPS, then asks the user what to name the pin.
+   * Sets _pendingQuestion so the next speech is captured as the pin name.
+   */
+  async _pinLocation() {
+    try {
+      const loc = await LocationService.getCurrentLocation();
+      this._pendingQuestion = {
+        type: 'awaitPinName',
+        data: { latitude: loc.latitude, longitude: loc.longitude },
+      };
+      await TextToSpeechService.speak('What do you want to save this location as?', {}, 'normal');
+      return { waiting: true };
+    } catch (e) {
+      await TextToSpeechService.speak('Could not get your location. Make sure location is enabled.');
+      return { error: e.message };
+    }
+  }
+
+  async _listPins() {
+    await PinnedLocationService.initialize();
+    const pins = await PinnedLocationService.getAllPins();
+    if (pins.length === 0) {
+      await TextToSpeechService.speak('You have no saved locations yet. Say pin my location to save one.');
+      return { pins: [] };
+    }
+    const names = pins.slice(0, 5).map(p => p.displayName).join(', ');
+    await TextToSpeechService.speak(`You have ${pins.length} saved location${pins.length > 1 ? 's' : ''}: ${names}`);
+    return { pins };
+  }
+
+  async _deletePin(name) {
+    if (!name) {
+      await TextToSpeechService.speak('Which saved location should I delete?');
+      return { deleted: false };
+    }
+    const deleted = await PinnedLocationService.deletePin(name);
+    if (deleted) {
+      await TextToSpeechService.speak(`Deleted saved location: ${name}`);
+    } else {
+      await TextToSpeechService.speak(`Could not find a saved location named ${name}`);
+    }
+    return { deleted };
+  }
+
+  // ── Indoor Navigation ──────────────────────────────────────────────────────
+
+  /**
+   * Begin mapping a new building.
+   * If a name was extracted from the voice command, use it.
+   * Otherwise ask for the building name.
+   */
+  async _startMappingBuilding(name) {
+    try {
+      const loc = await LocationService.getCurrentLocation();
+      if (!name || name.length < 2) {
+        this._pendingQuestion = {
+          type: 'awaitBuildingName',
+          data: { latitude: loc.latitude, longitude: loc.longitude },
+        };
+        await TextToSpeechService.speak('What is the name of this building?');
+        return { waiting: true };
+      }
+      await IndoorNavigationService.initialize();
+      const { building, entranceNode } = await IndoorNavigationService.startMapping(name, loc);
+      await TextToSpeechService.speak(
+        `Started mapping ${name}. Walk to each landmark and say mark, followed by its type and name. Say finish mapping when done.`
+      );
+      return { building };
+    } catch (e) {
+      await TextToSpeechService.speak('Could not start mapping. Make sure location is enabled.');
+      return { error: e.message };
+    }
+  }
+
+  /**
+   * Mark a landmark at the current GPS position during mapping.
+   * Parses "mark [type] [name]" or "mark this as [name]" from the extracted param.
+   *
+   * Examples:
+   *   "mark staircase ground floor stairs"  → type=staircase, name="ground floor stairs"
+   *   "mark door main entrance"             → type=door,      name="main entrance"
+   *   "mark room washroom"                  → type=room,      name="washroom"
+   */
+  async _markLandmark(param) {
+    if (!param) {
+      this._pendingQuestion = {
+        type: 'awaitLandmarkName',
+        data: { nodeType: 'custom' },
+      };
+      await TextToSpeechService.speak('What type and name should I mark here?');
+      return { waiting: true };
+    }
+
+    const { nodeType, landmarkName } = this._parseLandmarkParam(param);
+
+    try {
+      const loc = await LocationService.getCurrentLocation();
+      await IndoorNavigationService.initialize();
+      const node = await IndoorNavigationService.markLandmark(landmarkName, nodeType, loc);
+      await TextToSpeechService.speak(`Marked ${nodeType}: ${landmarkName}`);
+      return { node };
+    } catch (e) {
+      await TextToSpeechService.speak('Could not mark landmark. ' + (e.message ?? ''));
+      return { error: e.message };
+    }
+  }
+
+  /**
+   * Parse "staircase main stairs" → { nodeType: 'staircase', landmarkName: 'main stairs' }
+   */
+  _parseLandmarkParam(param) {
+    const { NODE_TYPES } = require('./IndoorNavigationService');
+    const p = (param ?? '').toLowerCase().trim();
+    const typeAliases = {
+      staircase: NODE_TYPES.STAIRCASE, stairs: NODE_TYPES.STAIRCASE, stairway: NODE_TYPES.STAIRCASE,
+      elevator: NODE_TYPES.ELEVATOR,  lift: NODE_TYPES.ELEVATOR,
+      door: NODE_TYPES.DOOR,          entrance: NODE_TYPES.ENTRANCE, exit: NODE_TYPES.ENTRANCE,
+      room: NODE_TYPES.ROOM,          office: NODE_TYPES.OFFICE,
+      toilet: NODE_TYPES.TOILET,      bathroom: NODE_TYPES.TOILET, washroom: NODE_TYPES.TOILET,
+      kitchen: NODE_TYPES.KITCHEN,    cafeteria: NODE_TYPES.KITCHEN,
+      corridor: NODE_TYPES.CORRIDOR,  hallway: NODE_TYPES.CORRIDOR, hall: NODE_TYPES.CORRIDOR,
+    };
+
+    const words = p.split(/\s+/);
+    let nodeType = NODE_TYPES.CUSTOM;
+    let nameStart = 0;
+
+    for (let i = 0; i < Math.min(words.length, 2); i++) {
+      if (typeAliases[words[i]]) {
+        nodeType  = typeAliases[words[i]];
+        nameStart = i + 1;
+        break;
+      }
+    }
+
+    // Strip leading "as" or "a" (e.g. "mark this as washroom" → "washroom")
+    while (nameStart < words.length && (words[nameStart] === 'as' || words[nameStart] === 'a')) {
+      nameStart++;
+    }
+
+    const landmarkName = words.slice(nameStart).join(' ').trim() || param.trim();
+    return { nodeType, landmarkName };
+  }
+
+  async _finishMapping() {
+    await IndoorNavigationService.initialize();
+    const building = await IndoorNavigationService.finishMapping();
+    if (building) {
+      const nodeCount = Object.values(building.floors)
+        .reduce((sum, f) => sum + Object.keys(f.nodes).length, 0);
+      await TextToSpeechService.speak(
+        `Building map saved for ${building.name} with ${nodeCount} landmark${nodeCount !== 1 ? 's' : ''}.`
+      );
+    } else {
+      await TextToSpeechService.speak('No active mapping session to finish.');
+    }
+    return { finished: true };
+  }
+
+  async _navigateIndoor(destination) {
+    if (!destination) {
+      await TextToSpeechService.speak('Where would you like to go inside the building?');
+      return { navigating: false };
+    }
+    await IndoorNavigationService.initialize();
+
+    if (!IndoorNavigationService.activeBuilding) {
+      // Try to auto-detect a nearby building
+      try {
+        const loc = await LocationService.getCurrentLocation();
+        const nearby = await IndoorNavigationService.detectNearbyBuilding(loc.latitude, loc.longitude);
+        if (nearby) {
+          await IndoorNavigationService.setActiveBuilding(nearby.building.id);
+          await TextToSpeechService.speak(`Detected ${nearby.building.name}`);
+        } else {
+          await TextToSpeechService.speak(
+            'No mapped building nearby. Say enter building or start mapping building first.'
+          );
+          return { navigating: false };
+        }
+      } catch (_) {
+        await TextToSpeechService.speak('Could not get location for indoor navigation.');
+        return { navigating: false };
+      }
+    }
+
+    try {
+      const loc = await LocationService.getCurrentLocation().catch(() => null);
+      const result = await IndoorNavigationService.navigateTo(destination, loc);
+      if (!result) {
+        await TextToSpeechService.speak(
+          `Could not find ${destination} in this building. Try saying mark ${destination} here first.`
+        );
+        return { navigating: false };
+      }
+
+      const { steps, totalDistanceM } = result;
+      if (steps.length === 0) {
+        await TextToSpeechService.speak('You are already there.');
+        return { navigating: false, alreadyThere: true };
+      }
+
+      // Announce first step
+      const first = steps[0];
+      await TextToSpeechService.speak(
+        `Indoor navigation started. Total distance: ${Math.round(totalDistanceM)} metres. ${first.instruction}`
+      );
+
+      // Pass to NavigationScreen for live display
+      if (this._navDirectCb) {
+        this._navDirectCb(`[INDOOR] ${destination}`, false, { indoorSteps: steps, indoorDest: result.destination });
+      } else {
+        await this._navigateToScreen('Navigation', {});
+      }
+
+      return { navigating: true, steps };
+    } catch (e) {
+      await TextToSpeechService.speak('Indoor navigation failed. ' + (e.message ?? ''));
+      return { error: e.message };
+    }
+  }
+
+  async _enterBuilding() {
+    await IndoorNavigationService.initialize();
+    try {
+      const loc = await LocationService.getCurrentLocation();
+      const nearby = await IndoorNavigationService.detectNearbyBuilding(loc.latitude, loc.longitude, 120);
+      if (nearby) {
+        await IndoorNavigationService.setActiveBuilding(nearby.building.id);
+        const nodeCount = Object.values(nearby.building.floors)
+          .reduce((sum, f) => sum + Object.keys(f.nodes).length, 0);
+        await TextToSpeechService.speak(
+          `Entered ${nearby.building.name}. ${nodeCount} landmarks mapped. Say navigate inside to, followed by a location name.`
+        );
+        return { building: nearby.building };
+      }
+      await TextToSpeechService.speak(
+        'No mapped building found nearby. Say start mapping building to create a new building map.'
+      );
+      return { building: null };
+    } catch (e) {
+      await TextToSpeechService.speak('Could not detect building.');
+      return { error: e.message };
+    }
+  }
+
+  async _exitBuilding() {
+    IndoorNavigationService.exitBuilding();
+    await TextToSpeechService.speak('Switched to outdoor navigation mode.');
+    return { exited: true };
+  }
+
+  async _selfLocalise(nodeName) {
+    if (!nodeName) {
+      await TextToSpeechService.speak('Please tell me which landmark you are at.');
+      return { localised: false };
+    }
+    await IndoorNavigationService.initialize();
+    const node = IndoorNavigationService.setCurrentNode(nodeName);
+    if (node) {
+      await TextToSpeechService.speak(`Got it. You are at ${node.name}.`);
+      return { localised: true, node };
+    }
+    await TextToSpeechService.speak(
+      `Could not find ${nodeName} in the current building. Try marking it first.`
+    );
+    return { localised: false };
+  }
+
+  // ── Multi-turn answer handler ──────────────────────────────────────────────
+
+  /**
+   * Called when _pendingQuestion is set and the user speaks the answer.
+   * Routes the answer to the appropriate handler based on question type.
+   */
+  async _handlePendingAnswer(answerText) {
+    const question = this._pendingQuestion;
+    this._pendingQuestion = null;  // clear first so errors don't loop
+
+    if (!question || !answerText?.trim()) {
+      await TextToSpeechService.speak('Sorry, I did not catch that. Please try again.');
+      return;
+    }
+
+    const answer = answerText.trim();
+
+    switch (question.type) {
+      case 'awaitPinName': {
+        // Re-read GPS when the user speaks the name — they may have moved since
+        // "pin my location" was first triggered.
+        let { latitude, longitude } = question.data;
+        try {
+          const fresh = await LocationService.getFreshLocation();
+          latitude = fresh.latitude;
+          longitude = fresh.longitude;
+        } catch (_) {}
+        await PinnedLocationService.initialize();
+        const pin = await PinnedLocationService.savePin(answer, { latitude, longitude });
+        await TextToSpeechService.speak(
+          `Location saved as ${pin.displayName}. Say take me to ${pin.displayName} to navigate here next time.`
+        );
+        break;
+      }
+
+      case 'awaitBuildingName': {
+        // User answered "What is the name of this building?"
+        const { latitude, longitude } = question.data;
+        await IndoorNavigationService.initialize();
+        const { building, entranceNode } = await IndoorNavigationService.startMapping(answer, { latitude, longitude });
+        await TextToSpeechService.speak(
+          `Started mapping ${answer}. Walk to each landmark and say mark, followed by its type and name. For example: mark staircase ground floor stairs. Say finish mapping when done.`
+        );
+        break;
+      }
+
+      case 'awaitLandmarkName': {
+        // User answered a follow-up about landmark type/name
+        const { nodeType } = question.data;
+        const { nodeType: resolvedType, landmarkName } = this._parseLandmarkParam(answer);
+        const finalType = resolvedType !== 'custom' ? resolvedType : nodeType;
+        try {
+          const loc = await LocationService.getCurrentLocation();
+          const node = await IndoorNavigationService.markLandmark(landmarkName, finalType, loc);
+          await TextToSpeechService.speak(`Marked ${finalType}: ${landmarkName}`);
+        } catch (e) {
+          await TextToSpeechService.speak('Could not mark landmark. ' + (e.message ?? ''));
+        }
+        break;
+      }
+
+      default:
+        await TextToSpeechService.speak('Sorry, something went wrong. Please try your command again.');
+    }
   }
 
   async _readText(context) {
@@ -1012,9 +1620,8 @@ class VoiceCommandService {
 
   async _logCommand(command, action, recognized, confidence) {
     try {
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await AsyncStorage.getItem('@sensei_auth_token');
       if (!token) return;
-
       await fetch(`${this.apiBaseUrl}/api/ai/voice-command`, {
         method: 'POST',
         headers: {
@@ -1111,6 +1718,25 @@ class VoiceCommandService {
 
       this._errorBackoffMs = 1000; // reset backoff on any real speech
 
+      // ── Multi-turn conversation intercept ─────────────────────────────────
+      // If the system asked the user a follow-up question (e.g. "What do you
+      // want to name this location?"), the next speech response is treated as
+      // the answer, not as a new command.  The wake-word gate is skipped so
+      // the user doesn't have to say "Hey Sensei" again.
+      if (this._pendingQuestion) {
+        if (this._onStateChange) this._onStateChange('processing', transcript);
+        try {
+          await this._handlePendingAnswer(transcript);
+        } catch (err) {
+          console.error('VoiceCommandService: pendingQuestion handler error:', err);
+        }
+        this._wakeWordMode = true;
+        MicToneService.playOff();
+        if (this._onStateChange) this._onStateChange('wake');
+        if (this._continuousListening) this._scheduleRestart(1000);
+        return;
+      }
+
       if (this._wakeWordMode) {
         // ── WAKE WORD MODE: only "hey sensei" unlocks the mic ────────────
         if (this._isWakeWord(transcript)) {
@@ -1138,13 +1764,18 @@ class VoiceCommandService {
         }
         // Return to wake-word mode after each command so user must say
         // "hey sensei" again for the next one (intentional design).
-        this._wakeWordMode = true;
-        // Tone: mic closed / back to passive listening
-        MicToneService.playOff();
-        if (this._onStateChange) this._onStateChange('wake');
-        // processCommand awaits TTS, so by this point speech has already
-        // finished — 1 s buffer is sufficient before reopening the mic.
-        if (this._continuousListening) this._scheduleRestart(1000);
+        // Exception: if a pendingQuestion was set by the command handler,
+        // stay in active mode so the user's answer is captured immediately.
+        if (!this._pendingQuestion) {
+          this._wakeWordMode = true;
+          MicToneService.playOff();
+          if (this._onStateChange) this._onStateChange('wake');
+          if (this._continuousListening) this._scheduleRestart(1000);
+        } else {
+          // Keep mic open — user needs to answer the question
+          if (this._onStateChange) this._onStateChange('listening');
+          if (this._continuousListening) this._scheduleRestart(800);
+        }
       }
     });
 
